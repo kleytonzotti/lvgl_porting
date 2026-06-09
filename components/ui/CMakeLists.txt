@@ -16,4 +16,5 @@ idf_component_register(
         bsp_waveshare_43
         app_io
         app_core
+        lvgl__lvgl
 )

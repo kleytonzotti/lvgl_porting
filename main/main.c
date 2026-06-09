@@ -13,6 +13,7 @@ void app_main(void)
 
     app_core_init();
 
+
     ui_init();
 
     ESP_LOGI(TAG, "Sistema iniciado");
