@@ -14,5 +14,6 @@ idf_component_register(
         esp_lcd
         esp_timer
         lvgl__lvgl
-
+        espressif__esp_lcd_touch_gt911
+        
 )

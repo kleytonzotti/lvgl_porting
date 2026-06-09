@@ -1,8 +1,8 @@
 #include "ui.h"
-#include "esp_log.h"
 
-void ui_screen_botoes_create(void *parent)
+void ui_screen_botoes_create(lv_obj_t *parent)
 {
-    (void)parent;
-    ESP_LOGI("UI_BOTOES", "Tela botoes placeholder");
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, "Botoes");
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 10, 10);
 }

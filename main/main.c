@@ -13,8 +13,11 @@ void app_main(void)
 
     app_core_init();
 
-
-    ui_init();
+    // Protege a criação da UI com o mutex do LVGL
+    if (bsp_lvgl_lock(-1)) {
+        ui_init();
+        bsp_lvgl_unlock();
+    }
 
     ESP_LOGI(TAG, "Sistema iniciado");
 
