@@ -7,7 +7,7 @@
 
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
-
+#include "lvgl.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,9 +68,12 @@ esp_err_t bsp_lcd_rgb_init(void);
 esp_err_t bsp_lvgl_init(void);
 
 bool bsp_lvgl_lock(int timeout_ms);
+typedef void (*bsp_touch_cb_t)(lv_coord_t x, lv_coord_t y, bool pressed);
 void bsp_lvgl_unlock(void);
-
+void bsp_touch_register_cb(bsp_touch_cb_t cb);
 void bsp_lvgl_handler(void);
+
+
 
 #ifdef __cplusplus
 }

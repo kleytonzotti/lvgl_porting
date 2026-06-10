@@ -17,6 +17,8 @@ void ui_screen_entradas_create(lv_obj_t *parent);
 void ui_screen_saidas_create(lv_obj_t *parent);
 void ui_screen_calculos_create(lv_obj_t *parent);
 void ui_screen_botoes_create(lv_obj_t *parent);
+void ui_screen_touch_create(lv_obj_t *parent);
+void ui_screen_touch_update(lv_coord_t x, lv_coord_t y, bool pressed);
 
 #ifdef __cplusplus
 }

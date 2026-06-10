@@ -13,7 +13,12 @@ static const char *TAG = "BSP_LVGL";
 
 static SemaphoreHandle_t s_lvgl_mux  = NULL;
 static TaskHandle_t      s_lvgl_task = NULL;
+static bsp_touch_cb_t s_touch_cb = NULL;
 
+void bsp_touch_register_cb(bsp_touch_cb_t cb)
+{
+    s_touch_cb = cb;
+}
 // ── Flush callback ────────────────────────────────────────
 static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
@@ -61,8 +66,10 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
         data->point.x = x;
         data->point.y = y;
         data->state   = LV_INDEV_STATE_PRESSED;
+        if (s_touch_cb) s_touch_cb(x, y, true);
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
+        if (s_touch_cb) s_touch_cb(0, 0, false);
     }
 }
 

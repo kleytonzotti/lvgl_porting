@@ -16,4 +16,5 @@ idf_component_register(
         lvgl__lvgl
         espressif__esp_lcd_touch_gt911
         
+        
 )

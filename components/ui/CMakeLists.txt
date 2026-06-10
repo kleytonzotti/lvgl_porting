@@ -8,6 +8,7 @@ idf_component_register(
         "src/ui_screen_saidas.c"
         "src/ui_screen_calculos.c"
         "src/ui_screen_botoes.c"
+        "src/ui_screen_touch.c"
 
     INCLUDE_DIRS
         "include"
