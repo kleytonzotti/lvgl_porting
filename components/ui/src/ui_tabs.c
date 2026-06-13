@@ -21,7 +21,6 @@ void ui_tabs_create(void)
     ui_screen_calculos_create(tab_calc);
     ui_screen_botoes_create(tab_bot);
     ui_screen_touch_create(tab_touch);
-    bsp_touch_register_cb(ui_screen_touch_update);
 
     ESP_LOGI(TAG, "Tabs criadas");
 }

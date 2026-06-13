@@ -10,8 +10,8 @@ esp_err_t bsp_backlight_set(bool enable)
 
     // CH422G: configura pinos como saída
     buf = 0x01;
-    ESP_ERROR_CHECK(i2c_master_write_to_device(BSP_I2C_NUM, 0x24, &buf, 1,
-        pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS)));
+    i2c_master_write_to_device(BSP_I2C_NUM, 0x24, &buf, 1,
+        pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS));
 
     // Liga ou apaga o backlight
     buf = enable ? 0x1E : 0x1A;

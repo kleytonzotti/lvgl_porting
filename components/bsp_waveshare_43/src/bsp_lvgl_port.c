@@ -13,12 +13,20 @@ static const char *TAG = "BSP_LVGL";
 
 static SemaphoreHandle_t s_lvgl_mux  = NULL;
 static TaskHandle_t      s_lvgl_task = NULL;
-static bsp_touch_cb_t s_touch_cb = NULL;
+static bsp_touch_cb_t    s_touch_cb  = NULL;
 
+// ── Estado do touch (despachado pelo handler, não no callback) ─
+static lv_coord_t  s_last_x       = 0;
+static lv_coord_t  s_last_y       = 0;
+static bool        s_last_pressed = false;
+static bool        s_touch_dirty  = false;
+
+// ── Registro de callback externo ─────────────────────────
 void bsp_touch_register_cb(bsp_touch_cb_t cb)
 {
     s_touch_cb = cb;
 }
+
 // ── Flush callback ────────────────────────────────────────
 static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
@@ -52,6 +60,32 @@ static void lvgl_task(void *arg)
 }
 
 // ── Touch read callback ───────────────────────────────────
+// Apenas atualiza estado — não chama LVGL diretamente
+/*static void lvgl_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
+{
+    esp_lcd_touch_handle_t tp = (esp_lcd_touch_handle_t)drv->user_data;
+
+    uint16_t x, y;
+    uint8_t cnt = 0;
+
+    esp_lcd_touch_read_data(tp);
+    bool pressed = esp_lcd_touch_get_coordinates(tp, &x, &y, NULL, &cnt, 1);
+
+    if (pressed && cnt > 0) {
+        data->point.x  = x;
+        data->point.y  = y;
+        data->state    = LV_INDEV_STATE_PRESSED;
+        s_last_x       = x;
+        s_last_y       = y;
+        s_last_pressed = true;
+        s_touch_dirty  = true;
+    } else {
+        data->state    = LV_INDEV_STATE_RELEASED;
+        s_last_pressed = false;
+        s_touch_dirty  = true;
+    }
+}*/
+
 static void lvgl_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
     esp_lcd_touch_handle_t tp = (esp_lcd_touch_handle_t)drv->user_data;
@@ -63,20 +97,30 @@ static void lvgl_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     bool pressed = esp_lcd_touch_get_coordinates(tp, &x, &y, NULL, &cnt, 1);
 
     if (pressed && cnt > 0) {
-        data->point.x = x;
-        data->point.y = y;
-        data->state   = LV_INDEV_STATE_PRESSED;
-        if (s_touch_cb) s_touch_cb(x, y, true);
+        data->point.x  = x;
+        data->point.y  = y;
+        data->state    = LV_INDEV_STATE_PRESSED;
+        // só marca dirty se mudou estado ou posição
+        if (!s_last_pressed || s_last_x != x || s_last_y != y) {
+            s_last_x       = x;
+            s_last_y       = y;
+            s_last_pressed = true;
+            s_touch_dirty  = true;
+        }
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
-        if (s_touch_cb) s_touch_cb(0, 0, false);
+        // só marca dirty se estava pressionado antes
+        if (s_last_pressed) {
+            s_last_pressed = false;
+            s_touch_dirty  = true;
+        }
     }
 }
 
 // ── Touch init ────────────────────────────────────────────
 static void bsp_touch_init(void)
 {
-    // GPIO4 como saída — reset do GT911 via CH422G
+    // GPIO4 como saída — necessário para reset do GT911 via CH422G
     gpio_config_t io_cfg = {
         .pin_bit_mask = (1ULL << GPIO_NUM_4),
         .mode         = GPIO_MODE_OUTPUT,
@@ -87,11 +131,9 @@ static void bsp_touch_init(void)
     gpio_config(&io_cfg);
 
     // Sequência de reset do GT911 via CH422G
+    // NOTA: comando 0x01→0x24 (config CH422G) omitido aqui —
+    // bsp_backlight_set() já o executa antes desta função.
     uint8_t buf;
-
-    buf = 0x01;
-    i2c_master_write_to_device(BSP_I2C_NUM, 0x24, &buf, 1,
-        pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS));
 
     buf = 0x2C;
     i2c_master_write_to_device(BSP_I2C_NUM, 0x38, &buf, 1,
@@ -106,8 +148,8 @@ static void bsp_touch_init(void)
         pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS));
     esp_rom_delay_us(200 * 1000);
 
-    // Cria IO I2C para o GT911 sem setar scl_speed_hz
-    // (driver legado usa frequência do i2c_param_config)
+    // IO I2C para o GT911
+    // scl_speed_hz não é setado — driver legado usa frequência do i2c_param_config
     esp_lcd_panel_io_handle_t tp_io = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = {
         .dev_addr            = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,
@@ -116,7 +158,7 @@ static void bsp_touch_init(void)
         .lcd_cmd_bits        = 16,
         .lcd_param_bits      = 8,
         .flags = {
-            .dc_low_on_data  = 0,
+            .dc_low_on_data        = 0,
             .disable_control_phase = 1,
         },
     };
@@ -199,12 +241,20 @@ esp_err_t bsp_lvgl_init(void)
     return ESP_OK;
 }
 
-// ── Handler e lock público ────────────────────────────────
+// ── Handler público — despacha callback de touch com mutex ─
 void bsp_lvgl_handler(void)
 {
+    if (s_touch_dirty && s_touch_cb) {
+        if (bsp_lvgl_lock(10)) {
+            s_touch_cb(s_last_x, s_last_y, s_last_pressed);
+            s_touch_dirty = false;
+            bsp_lvgl_unlock();
+        }
+    }
     vTaskDelay(pdMS_TO_TICKS(10));
 }
 
+// ── Lock / Unlock público ─────────────────────────────────
 bool bsp_lvgl_lock(int timeout_ms)
 {
     const TickType_t ticks = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);

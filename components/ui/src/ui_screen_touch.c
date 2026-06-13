@@ -1,41 +1,57 @@
 #include "ui.h"
 #include "esp_log.h"
+#include "bsp_waveshare_43.h"
 
 static const char *TAG = "UI_TOUCH";
 
 static lv_obj_t *s_label_coords = NULL;
 static lv_obj_t *s_canvas       = NULL;
 static lv_obj_t *s_label_status = NULL;
+static lv_obj_t *s_touch_point = NULL;
+
 
 // ── Área de desenho do ponto ──────────────────────────────
 static void draw_touch_point(lv_coord_t x, lv_coord_t y)
 {
-    lv_obj_clean(s_canvas);
+    if (!s_touch_point) {
+        s_touch_point = lv_obj_create(s_canvas);
+        lv_obj_set_size(s_touch_point, 20, 20);
+        lv_obj_set_style_radius(s_touch_point, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_touch_point, lv_palette_main(LV_PALETTE_RED), 0);
+        lv_obj_set_style_border_width(s_touch_point, 0, 0);
+    }
 
-    // Círculo no ponto tocado
-    lv_obj_t *point = lv_obj_create(s_canvas);
-    lv_obj_set_size(point, 20, 20);
-    lv_obj_set_style_radius(point, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(point, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_border_width(point, 0, 0);
-    lv_obj_set_pos(point, x - 10, y - 10);
+    lv_obj_set_pos(s_touch_point, x - 10, y - 10);
+    lv_obj_clear_flag(s_touch_point, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ── Callback chamado pela task de touch ──────────────────
 void ui_screen_touch_update(lv_coord_t x, lv_coord_t y, bool pressed)
 {
-    if (!s_label_coords || !s_label_status) return;
+    if (!s_label_coords || !s_label_status || !s_canvas) return;
+
+    // Log para diagnóstico — mostra coordenada raw e dimensão do canvas
+    lv_coord_t cx = lv_obj_get_x(s_canvas);
+    lv_coord_t cy = lv_obj_get_y(s_canvas);
+    lv_coord_t cw = lv_obj_get_width(s_canvas);
+    lv_coord_t ch = lv_obj_get_height(s_canvas);
 
     if (pressed) {
+        ESP_LOGI("TOUCH_DBG",
+            "RAW x=%d y=%d | canvas pos=(%d,%d) size=%dx%d",
+            x, y, cx, cy, cw, ch);
+
         lv_label_set_text_fmt(s_label_coords, "X: %d   Y: %d", x, y);
         lv_label_set_text(s_label_status, "Estado: PRESSIONADO");
         lv_obj_set_style_text_color(s_label_status,
             lv_palette_main(LV_PALETTE_GREEN), 0);
         draw_touch_point(x, y);
     } else {
+        ESP_LOGI("TOUCH_DBG", "SOLTO");
         lv_label_set_text(s_label_status, "Estado: SOLTO");
         lv_obj_set_style_text_color(s_label_status,
             lv_palette_main(LV_PALETTE_GREY), 0);
+        if (s_touch_point) lv_obj_add_flag(s_touch_point, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -78,4 +94,5 @@ void ui_screen_touch_create(lv_obj_t *parent)
     lv_obj_align(hint, LV_ALIGN_CENTER, 0, 0);
 
     ESP_LOGI(TAG, "Tela touch criada");
+    bsp_touch_register_cb(ui_screen_touch_update);
 }
