@@ -38,10 +38,10 @@ void ui_screen_touch_update(lv_coord_t x, lv_coord_t y, bool pressed)
 
     if (pressed) {
         ESP_LOGI("TOUCH_DBG",
-            "RAW x=%d y=%d | canvas pos=(%d,%d) size=%dx%d",
-            x, y, cx, cy, cw, ch);
+            "RAW x=%ld y=%ld | canvas pos=(%ld,%ld) size=%ldx%ld",
+            (long)x, (long)y, (long)cx, (long)cy, (long)cw, (long)ch);
 
-        lv_label_set_text_fmt(s_label_coords, "X: %d   Y: %d", x, y);
+        lv_label_set_text_fmt(s_label_coords, "X: %ld   Y: %ld", (long)x, (long)y);
         lv_label_set_text(s_label_status, "Estado: PRESSIONADO");
         lv_obj_set_style_text_color(s_label_status,
             lv_palette_main(LV_PALETTE_GREEN), 0);
@@ -61,13 +61,13 @@ void ui_screen_touch_create(lv_obj_t *parent)
     // Título
     lv_obj_t *title = lv_label_create(parent);
     lv_label_set_text(title, "Diagnóstico de Touch");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 10, 8);
 
     // Coordenadas
     s_label_coords = lv_label_create(parent);
     lv_label_set_text(s_label_coords, "X: ---   Y: ---");
-    lv_obj_set_style_text_font(s_label_coords, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(s_label_coords, &lv_font_montserrat_14, 0);
     lv_obj_align(s_label_coords, LV_ALIGN_TOP_LEFT, 10, 35);
 
     // Status

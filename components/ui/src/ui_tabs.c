@@ -6,7 +6,9 @@ static const char *TAG = "UI_TABS";
 
 void ui_tabs_create(void)
 {
-    lv_obj_t *tv = lv_tabview_create(lv_scr_act(), LV_DIR_TOP, 40);
+    lv_obj_t *tv = lv_tabview_create(lv_scr_act());
+    lv_tabview_set_tab_bar_position(tv, LV_DIR_TOP);
+    lv_tabview_set_tab_bar_size(tv, 40);
 
     lv_obj_t *tab_anim    = lv_tabview_add_tab(tv, "Motor");
     lv_obj_t *tab_entr    = lv_tabview_add_tab(tv, "Entradas");
