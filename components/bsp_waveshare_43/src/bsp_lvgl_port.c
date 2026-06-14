@@ -145,6 +145,12 @@ esp_err_t bsp_lvgl_init(void)
              disp, (int)lv_display_get_horizontal_resolution(disp),
              (int)lv_display_get_vertical_resolution(disp));
 
+    // DEBUG: 1fps para diagnosticar corrupção visual (bandwidth PSRAM)
+    lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
+    if (refr_timer) {
+        lv_timer_set_period(refr_timer, 1000);  // 1000ms = 1fps
+    }
+
     // 3) Inicializa e registra o touch
     esp_lcd_touch_handle_t tp = bsp_touch_init();
 
