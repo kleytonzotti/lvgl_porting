@@ -7,7 +7,7 @@
 
 static const char *TAG = "UI_SISTEMA";
 
-static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_menu_show(); }
+static void back_cb(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "<- Voltando ao menu"); ui_menu_show(); }
 
 // Volta do touch diagnostic → limpa o callback antes de sair
 static void touch_diag_back_cb(lv_event_t *e)

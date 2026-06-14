@@ -174,6 +174,9 @@ void bsp_lvgl_handler(void)
                 s_last_y       = point.y;
                 s_last_pressed = pressed;
                 s_touch_dirty  = true;
+                ESP_LOGI(TAG, "Touch: x=%d y=%d %s",
+                         (int)point.x, (int)point.y,
+                         pressed ? "PRESS" : "RELEASE");
             }
 
             if (s_touch_dirty) {
@@ -183,7 +186,11 @@ void bsp_lvgl_handler(void)
             bsp_lvgl_unlock();
         }
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
+    // CONFIG_FREERTOS_HZ=100 → 1 tick = 10ms.
+    // vTaskDelay(0) não bloqueia de verdade e priva a IDLE0 de CPU,
+    // disparando o Task WDT. Usar pelo menos 2 ticks (20ms) garante
+    // que a IDLE rode e alimente o watchdog.
+    vTaskDelay(2);
 }
 
 // ── Lock / Unlock — delega para esp_lvgl_port ────────────

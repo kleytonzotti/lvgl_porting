@@ -17,6 +17,7 @@ static void bar_anim_cb(void *bar, int32_t val)
 static void splash_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
+    ESP_LOGI(TAG, "Timer splash expirou — carregando menu");
     ui_menu_show();
 }
 
@@ -50,6 +51,8 @@ static void create_deco_dot(lv_obj_t *parent, lv_align_t align, int32_t x, int32
 // ── Splash Screen ─────────────────────────────────────────────
 void ui_splash_show(void)
 {
+    ESP_LOGI(TAG, "Criando splash screen (%dms)...", SPLASH_TIME_MS);
+
     // Tela dedicada
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
@@ -133,12 +136,12 @@ void ui_splash_show(void)
 
     // Carrega a tela imediatamente (sem animação pesada de FADE)
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ESP_LOGI(TAG, "Tela splash carregada no display");
 
     // Timer único para ir ao menu
     lv_timer_t *t = lv_timer_create(splash_timer_cb, SPLASH_TIME_MS, NULL);
     lv_timer_set_repeat_count(t, 1);
-
-    ESP_LOGI(TAG, "Splash iniciado");
+    ESP_LOGI(TAG, "Timer %dms iniciado — aguardando transicao para menu", SPLASH_TIME_MS);
 }
 
 // Mantida por compatibilidade — apenas delega

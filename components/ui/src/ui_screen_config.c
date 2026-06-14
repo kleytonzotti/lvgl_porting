@@ -5,7 +5,7 @@
 
 static const char *TAG = "UI_CONFIG";
 
-static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_menu_show(); }
+static void back_cb(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "<- Voltando ao menu"); ui_menu_show(); }
 
 static void brightness_cb(lv_event_t *e)
 {

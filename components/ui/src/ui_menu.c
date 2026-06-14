@@ -13,13 +13,13 @@ typedef struct {
 } menu_item_t;
 
 // ── Callbacks de navegação ────────────────────────────────────
-static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_screen_dashboard_show(); }
-static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ui_screen_scanner_show(); }
-static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ui_screen_ecu_show(); }
-static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_screen_can_show(); }
-static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_screen_datalogger_show(); }
-static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_screen_config_show(); }
-static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_screen_sistema_show(); }
+static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ESP_LOGI(TAG, "-> Dashboard");   ui_screen_dashboard_show(); }
+static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ESP_LOGI(TAG, "-> Scanner");     ui_screen_scanner_show(); }
+static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ESP_LOGI(TAG, "-> ECU");         ui_screen_ecu_show(); }
+static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ESP_LOGI(TAG, "-> CAN");         ui_screen_can_show(); }
+static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "-> DataLogger");  ui_screen_datalogger_show(); }
+static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ESP_LOGI(TAG, "-> Config");      ui_screen_config_show(); }
+static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ESP_LOGI(TAG, "-> Sistema");     ui_screen_sistema_show(); }
 
 // ── Cria um botão do menu ─────────────────────────────────────
 static void create_menu_btn(lv_obj_t *parent, const char *icon,
@@ -119,5 +119,5 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_HOME,     "Sistema",     cb_sistema);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    ESP_LOGI(TAG, "Menu criado");
+    ESP_LOGI(TAG, "Menu principal exibido — 7 botoes disponiveis");
 }
