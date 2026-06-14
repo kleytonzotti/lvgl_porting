@@ -32,9 +32,9 @@ void app_main(void)
     ESP_LOGI(TAG, "[3/4] UI criada, aguardando primeiro frame...");
 
     // 4) Aguarda o LVGL renderizar o primeiro frame antes de ligar o backlight.
-    //    Com FREERTOS_HZ=100, 1 tick = 10ms. 5 ticks = 50ms e suficiente
-    //    para o bounce buffer ter dados validos.
-    vTaskDelay(5);
+    //    Com FREERTOS_HZ=100, 1 tick = 10ms. 10 ticks = 100ms garante
+    //    que o primeiro frame (splash) já está no framebuffer PSRAM.
+    vTaskDelay(10);
     ESP_ERROR_CHECK(bsp_backlight_set(true));
     ESP_LOGI(TAG, "[4/4] Backlight ON — sistema iniciado");
 
