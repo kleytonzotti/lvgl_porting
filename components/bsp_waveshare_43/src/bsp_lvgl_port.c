@@ -105,8 +105,8 @@ esp_err_t bsp_lvgl_init(void)
 
     const lvgl_port_display_cfg_t disp_cfg = {
         .panel_handle     = panel,
-        .buffer_size      = BSP_LCD_H_RES * BSP_LVGL_BUFFER_LINES,
-        .double_buffer    = false,
+        .buffer_size      = BSP_LCD_BOUNCE_BUFFER_PX,
+        .double_buffer    = true,
         .hres             = BSP_LCD_H_RES,
         .vres             = BSP_LCD_V_RES,
         .monochrome       = false,
@@ -117,7 +117,7 @@ esp_err_t bsp_lvgl_init(void)
             .mirror_y = false,
         },
         .flags = {
-            .buff_dma    = false,
+            .buff_dma    = true,
             .buff_spiram = false,
             .swap_bytes  = false,
         },
@@ -125,7 +125,7 @@ esp_err_t bsp_lvgl_init(void)
 
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode       = false,
+            .bb_mode       = true,
             .avoid_tearing = false,
         },
     };
@@ -161,7 +161,7 @@ esp_err_t bsp_lvgl_init(void)
 void bsp_lvgl_handler(void)
 {
     if (s_touch_indev && s_touch_cb) {
-        if (bsp_lvgl_lock(10)) {
+        if (bsp_lvgl_lock(50)) {
             lv_indev_state_t state = lv_indev_get_state(s_touch_indev);
             lv_point_t point;
             lv_indev_get_point(s_touch_indev, &point);
@@ -183,7 +183,7 @@ void bsp_lvgl_handler(void)
             bsp_lvgl_unlock();
         }
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 // ── Lock / Unlock — delega para esp_lvgl_port ────────────

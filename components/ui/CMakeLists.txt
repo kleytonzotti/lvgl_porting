@@ -1,7 +1,20 @@
 idf_component_register(
     SRCS
+        # Core
         "src/ui.c"
         "src/ui_splash.c"
+        "src/ui_menu.c"
+
+        # Telas principais
+        "src/ui_screen_dashboard.c"
+        "src/ui_screen_scanner.c"
+        "src/ui_screen_ecu.c"
+        "src/ui_screen_can.c"
+        "src/ui_screen_datalogger.c"
+        "src/ui_screen_config.c"
+        "src/ui_screen_sistema.c"
+
+        # Legado (mantidos para compatibilidade)
         "src/ui_tabs.c"
         "src/ui_screen_animacao.c"
         "src/ui_screen_entradas.c"
@@ -18,4 +31,5 @@ idf_component_register(
         app_io
         app_core
         lvgl__lvgl
+        esp_common
 )

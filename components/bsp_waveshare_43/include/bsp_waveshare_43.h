@@ -49,12 +49,16 @@ extern "C" {
 #define BSP_I2C_FREQ_HZ             (400000)
 #define BSP_I2C_TIMEOUT_MS          (1000)
 
+// ── LCD bounce buffer (linhas por transferência DMA) ─────
+#define BSP_LCD_BOUNCE_LINES        (10)
+#define BSP_LCD_BOUNCE_BUFFER_PX    (BSP_LCD_H_RES * BSP_LCD_BOUNCE_LINES)
+
 // ── LVGL task ─────────────────────────────────────────────
 #define BSP_LVGL_TICK_MS            (2)
-#define BSP_LVGL_TASK_STACK_KB      (6)
+#define BSP_LVGL_TASK_STACK_KB      (8)
 #define BSP_LVGL_TASK_PRIORITY      (2)
 #define BSP_LVGL_TASK_CORE          (1)
-#define BSP_LVGL_TASK_MAX_DELAY_MS  (500)
+#define BSP_LVGL_TASK_MAX_DELAY_MS  (10)
 #define BSP_LVGL_TASK_MIN_DELAY_MS  (1)
 #define BSP_LVGL_BUFFER_LINES       (50)
 

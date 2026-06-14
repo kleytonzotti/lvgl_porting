@@ -29,7 +29,7 @@ esp_err_t bsp_lcd_rgb_init(void)
         .data_width            = 16,
         .bits_per_pixel        = 16,
         .num_fbs               = 1,
-        .bounce_buffer_size_px = BSP_LCD_H_RES * 10,
+        .bounce_buffer_size_px = BSP_LCD_BOUNCE_BUFFER_PX,
         .sram_trans_align      = 4,
         .psram_trans_align     = 64,
         .hsync_gpio_num        = BSP_LCD_IO_HSYNC,
