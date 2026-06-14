@@ -105,8 +105,11 @@ esp_err_t bsp_lvgl_init(void)
 
     const lvgl_port_display_cfg_t disp_cfg = {
         .panel_handle     = panel,
-        .buffer_size      = BSP_LCD_BOUNCE_BUFFER_PX,
-        .double_buffer    = true,
+        // Com avoid_tearing=true, o port ignora buffer_size e usa os
+        // framebuffers PSRAM do driver RGB diretamente (800x480x2 cada).
+        // O valor abaixo é sobrescrito internamente pelo port.
+        .buffer_size      = BSP_LCD_H_RES * BSP_LCD_V_RES,
+        .double_buffer    = false,
         .hres             = BSP_LCD_H_RES,
         .vres             = BSP_LCD_V_RES,
         .monochrome       = false,
@@ -117,16 +120,19 @@ esp_err_t bsp_lvgl_init(void)
             .mirror_y = false,
         },
         .flags = {
-            .buff_dma    = true,
+            .buff_dma    = false,
             .buff_spiram = false,
             .swap_bytes  = false,
+            // OBRIGATÓRIO com avoid_tearing=true: habilita a espera por
+            // VSYNC no flush callback (sem isso os framebuffers nunca trocam)
+            .full_refresh = true,
         },
     };
 
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode       = true,
-            .avoid_tearing = false,
+            .bb_mode       = false,   // VSYNC callback (1x/frame), não bounce (1x/chunk)
+            .avoid_tearing = true,    // duplo framebuffer PSRAM: ISR lê de A, LVGL escreve em B
         },
     };
 
@@ -138,6 +144,15 @@ esp_err_t bsp_lvgl_init(void)
     ESP_LOGI(TAG, "Display registrado: %p, hor_res=%d ver_res=%d",
              disp, (int)lv_display_get_horizontal_resolution(disp),
              (int)lv_display_get_vertical_resolution(disp));
+
+    // DEBUG: limita render a ~2fps para diagnosticar corrupção visual.
+    // Se a corrupção desaparecer → problema de bandwidth PSRAM.
+    // Se persistir → problema de lógica de renderização/layout.
+    // Remover após diagnóstico.
+    lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
+    if (refr_timer) {
+        lv_timer_set_period(refr_timer, 500);  // 500ms = 2fps
+    }
 
     // 3) Inicializa e registra o touch
     esp_lcd_touch_handle_t tp = bsp_touch_init();

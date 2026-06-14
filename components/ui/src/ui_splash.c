@@ -1,150 +1,226 @@
 #include "ui.h"
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
+#include "logo_zotti_white.h"
 #include "esp_log.h"
 
-#define SPLASH_TIME_MS   5000
+#define SPLASH_DURATION_MS  3500
 
 static const char *TAG = "UI_SPLASH";
 
-// ── Callback de animação da barra ──────────────────────────────
+static lv_obj_t *s_bar = NULL;
+
+// ── Callbacks de animação ─────────────────────────────────────
+static void anim_opa_cb(void *obj, int32_t value)
+{
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)value, 0);
+}
+
+static void anim_scale_cb(void *obj, int32_t value)
+{
+    lv_image_set_scale((lv_obj_t *)obj, (uint32_t)value);
+}
+
+static void anim_x_cb(void *obj, int32_t value)
+{
+    lv_obj_set_x((lv_obj_t *)obj, value);
+}
+
 static void bar_anim_cb(void *bar, int32_t val)
 {
     lv_bar_set_value((lv_obj_t *)bar, val, LV_ANIM_OFF);
 }
 
-// ── Transição para o menu ─────────────────────────────────────
-static void splash_timer_cb(lv_timer_t *timer)
+// ── Transição adiada para o menu ──────────────────────────────
+static void splash_to_menu_async(void *d)
 {
-    LV_UNUSED(timer);
-    ESP_LOGI(TAG, "Timer splash expirou — carregando menu");
+    LV_UNUSED(d);
+    s_bar = NULL;
     ui_menu_show();
 }
 
-// ── Cria linha decorativa ─────────────────────────────────────
-static lv_obj_t *create_deco_line(lv_obj_t *parent, int32_t w, int32_t y_ofs)
+static void splash_timer_cb(lv_timer_t *timer)
 {
-    lv_obj_t *line = lv_obj_create(parent);
-    lv_obj_set_size(line, w, 2);
-    lv_obj_align(line, LV_ALIGN_CENTER, 0, y_ofs);
-    lv_obj_set_style_bg_color(line, ZOTTI_ACCENT, 0);
-    lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(line, 0, 0);
-    lv_obj_set_style_radius(line, 1, 0);
-    lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
-    return line;
+    lv_timer_delete(timer);
+    lv_async_call(splash_to_menu_async, NULL);
 }
 
-// ── Cria ponto decorativo nas extremidades da linha ──────────
-static void create_deco_dot(lv_obj_t *parent, lv_align_t align, int32_t x, int32_t y)
+// ── Fundo com trilhas de circuito ─────────────────────────────
+static void add_circuit_dot(lv_obj_t *parent, int x, int y, int size, lv_opa_t opa)
 {
     lv_obj_t *dot = lv_obj_create(parent);
-    lv_obj_set_size(dot, 8, 8);
-    lv_obj_align(dot, align, x, y);
-    lv_obj_set_style_bg_color(dot, ZOTTI_ACCENT, 0);
-    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(dot, 0, 0);
+    lv_obj_set_size(dot, size, size);
+    lv_obj_set_pos(dot, x, y);
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(0x22D8FF), 0);
+    lv_obj_set_style_bg_opa(dot, opa, 0);
+    lv_obj_set_style_border_width(dot, 0, 0);
     lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void add_circuit_line(lv_obj_t *parent,
+                             const lv_point_precise_t *pts, uint16_t n,
+                             lv_opa_t opa)
+{
+    lv_obj_t *line = lv_line_create(parent);
+    lv_line_set_points(line, pts, n);
+    lv_obj_set_style_line_width(line, 2, 0);
+    lv_obj_set_style_line_color(line, lv_color_hex(0x22D8FF), 0);
+    lv_obj_set_style_line_opa(line, opa, 0);
+}
+
+static void create_circuit_background(lv_obj_t *parent)
+{
+    static const lv_point_precise_t p0[] = {{20,360},{120,360},{170,310},{260,310}};
+    static const lv_point_precise_t p1[] = {{40,420},{210,420},{270,380},{420,380}};
+    static const lv_point_precise_t p2[] = {{520,95},{590,95},{640,140},{760,140}};
+    static const lv_point_precise_t p3[] = {{610,410},{610,330},{690,330},{760,260}};
+    static const lv_point_precise_t p4[] = {{80,80},{160,80},{220,135},{350,135}};
+    static const lv_point_precise_t p5[] = {{430,435},{510,435},{555,390},{555,310}};
+    static const lv_point_precise_t p6[] = {{690,60},{720,90},{720,180},{780,220}};
+    static const lv_point_precise_t p7[] = {{310,55},{380,55},{430,100},{500,100}};
+
+    add_circuit_line(parent, p0, 4, LV_OPA_40);
+    add_circuit_line(parent, p1, 4, LV_OPA_20);
+    add_circuit_line(parent, p2, 4, LV_OPA_40);
+    add_circuit_line(parent, p3, 4, LV_OPA_20);
+    add_circuit_line(parent, p4, 4, LV_OPA_20);
+    add_circuit_line(parent, p5, 4, LV_OPA_20);
+    add_circuit_line(parent, p6, 4, LV_OPA_20);
+    add_circuit_line(parent, p7, 4, LV_OPA_20);
+
+    add_circuit_dot(parent, 112, 354, 10, LV_OPA_70);
+    add_circuit_dot(parent, 257, 305, 12, LV_OPA_70);
+    add_circuit_dot(parent, 415, 374, 11, LV_OPA_60);
+    add_circuit_dot(parent, 585,  89, 10, LV_OPA_70);
+    add_circuit_dot(parent, 752, 134, 12, LV_OPA_60);
+    add_circuit_dot(parent, 684, 324, 10, LV_OPA_60);
+    add_circuit_dot(parent, 340, 129,  9, LV_OPA_60);
+    add_circuit_dot(parent, 552, 306, 10, LV_OPA_60);
+    add_circuit_dot(parent, 720, 176,  9, LV_OPA_50);
+    add_circuit_dot(parent, 497,  94, 10, LV_OPA_50);
 }
 
 // ── Splash Screen ─────────────────────────────────────────────
 void ui_splash_show(void)
 {
-    ESP_LOGI(TAG, "Criando splash screen (%dms)...", SPLASH_TIME_MS);
+    ESP_LOGI(TAG, "Criando splash screen");
 
-    // Tela dedicada
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Painel central
-    lv_obj_t *panel = lv_obj_create(scr);
-    lv_obj_set_size(panel, 700, 300);
-    lv_obj_align(panel, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    // Fundo azul escuro com gradiente horizontal (navy → azul médio)
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x061B35), 0);
+    lv_obj_set_style_bg_grad_color(scr, lv_color_hex(0x0B4A7A), 0);
+    lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_HOR, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    // Linha superior decorativa
-    create_deco_line(panel, 500, -90);
-    create_deco_dot(panel, LV_ALIGN_CENTER, -250, -90);
-    create_deco_dot(panel, LV_ALIGN_CENTER,  250, -90);
+    // Trilhas de circuito
+    create_circuit_background(scr);
 
-    // Texto "ZOTTI" (branco)
-    lv_obj_t *lbl_zotti = lv_label_create(panel);
-    lv_label_set_text(lbl_zotti, "ZOTTI");
-    lv_obj_set_style_text_font(lbl_zotti, ZOTTI_FONT_LOGO, 0);
-    lv_obj_set_style_text_color(lbl_zotti, ZOTTI_WHITE, 0);
-    lv_obj_align(lbl_zotti, LV_ALIGN_CENTER, -110, -20);
+    // Faixa de luz (shine) passando da esquerda para direita
+    lv_obj_t *shine = lv_obj_create(scr);
+    lv_obj_set_size(shine, 90, 480);
+    lv_obj_set_pos(shine, -120, 0);
+    lv_obj_set_style_bg_color(shine, lv_color_hex(0x58E6FF), 0);
+    lv_obj_set_style_bg_opa(shine, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(shine, 0, 0);
+    lv_obj_set_style_radius(shine, 0, 0);
+    lv_obj_clear_flag(shine, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Texto "INFO" (ciano)
-    lv_obj_t *lbl_info = lv_label_create(panel);
-    lv_label_set_text(lbl_info, "INFO");
-    lv_obj_set_style_text_font(lbl_info, ZOTTI_FONT_LOGO, 0);
-    lv_obj_set_style_text_color(lbl_info, ZOTTI_ACCENT, 0);
-    lv_obj_align(lbl_info, LV_ALIGN_CENTER, 100, -20);
+    lv_anim_t a_shine;
+    lv_anim_init(&a_shine);
+    lv_anim_set_var(&a_shine, shine);
+    lv_anim_set_values(&a_shine, -120, 860);
+    lv_anim_set_duration(&a_shine, 1800);
+    lv_anim_set_delay(&a_shine, 400);
+    lv_anim_set_exec_cb(&a_shine, anim_x_cb);
+    lv_anim_set_path_cb(&a_shine, lv_anim_path_ease_in_out);
+    lv_anim_start(&a_shine);
 
-    // Linha separadora
-    lv_obj_t *sep = lv_obj_create(panel);
-    lv_obj_set_size(sep, 400, 1);
-    lv_obj_align(sep, LV_ALIGN_CENTER, 0, 35);
-    lv_obj_set_style_bg_color(sep, ZOTTI_GRAY_DARK, 0);
-    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(sep, 0, 0);
-    lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+    // Logo ZOTTI INFO (branco sobre transparente → A8 colorido branco)
+    lv_obj_t *logo = lv_image_create(scr);
+    lv_image_set_src(logo, &logo_zotti_white);
+    lv_obj_set_style_image_recolor(logo, lv_color_white(), 0);
+    lv_obj_set_style_image_recolor_opa(logo, LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(logo, LV_OPA_TRANSP, 0);
+    lv_image_set_scale(logo, 200);               // começa em ~78% (344px)
+    lv_obj_align(logo, LV_ALIGN_CENTER, 0, -40);
 
-    // Tagline
-    lv_obj_t *tagline = lv_label_create(panel);
-    lv_label_set_text(tagline, "Automotive Intelligence");
+    // Fade in da logo: transparente → opaco
+    lv_anim_t a_opa;
+    lv_anim_init(&a_opa);
+    lv_anim_set_var(&a_opa, logo);
+    lv_anim_set_values(&a_opa, 0, 255);
+    lv_anim_set_duration(&a_opa, 1200);
+    lv_anim_set_delay(&a_opa, 200);
+    lv_anim_set_exec_cb(&a_opa, anim_opa_cb);
+    lv_anim_start(&a_opa);
+
+    // Zoom in da logo: 78% → 100% com overshoot
+    lv_anim_t a_scale;
+    lv_anim_init(&a_scale);
+    lv_anim_set_var(&a_scale, logo);
+    lv_anim_set_values(&a_scale, 200, 256);
+    lv_anim_set_duration(&a_scale, 1300);
+    lv_anim_set_delay(&a_scale, 200);
+    lv_anim_set_exec_cb(&a_scale, anim_scale_cb);
+    lv_anim_set_path_cb(&a_scale, lv_anim_path_overshoot);
+    lv_anim_start(&a_scale);
+
+    // Tagline abaixo da logo
+    lv_obj_t *tagline = lv_label_create(scr);
+    lv_label_set_text(tagline, "Automotive Intelligence Platform");
     lv_obj_set_style_text_font(tagline, ZOTTI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(tagline, ZOTTI_GRAY, 0);
-    lv_obj_align(tagline, LV_ALIGN_CENTER, 0, 65);
+    lv_obj_set_style_text_color(tagline, lv_color_hex(0xBDEEFF), 0);
+    lv_obj_align(tagline, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_set_style_opa(tagline, LV_OPA_TRANSP, 0);
 
-    // Linha inferior decorativa
-    create_deco_line(panel, 500, 110);
-    create_deco_dot(panel, LV_ALIGN_CENTER, -250, 110);
-    create_deco_dot(panel, LV_ALIGN_CENTER,  250, 110);
+    lv_anim_t a_tag;
+    lv_anim_init(&a_tag);
+    lv_anim_set_var(&a_tag, tagline);
+    lv_anim_set_values(&a_tag, 0, 255);
+    lv_anim_set_duration(&a_tag, 1000);
+    lv_anim_set_delay(&a_tag, 900);
+    lv_anim_set_exec_cb(&a_tag, anim_opa_cb);
+    lv_anim_start(&a_tag);
 
-    // Versão (canto inferior direito da tela)
+    // Barra de loading
+    s_bar = lv_bar_create(scr);
+    lv_obj_set_size(s_bar, 420, 8);
+    lv_obj_align(s_bar, LV_ALIGN_CENTER, 0, 140);
+    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x0A2543), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_bar, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_bar, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_bar, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x22D8FF), LV_PART_INDICATOR);
+    lv_bar_set_range(s_bar, 0, 100);
+    lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
+
+    lv_anim_t a_bar;
+    lv_anim_init(&a_bar);
+    lv_anim_set_var(&a_bar, s_bar);
+    lv_anim_set_exec_cb(&a_bar, bar_anim_cb);
+    lv_anim_set_values(&a_bar, 0, 100);
+    lv_anim_set_duration(&a_bar, SPLASH_DURATION_MS - 300);
+    lv_anim_set_delay(&a_bar, 200);
+    lv_anim_start(&a_bar);
+
+    // Versão (canto inferior direito)
     lv_obj_t *lbl_ver = lv_label_create(scr);
     lv_label_set_text(lbl_ver, "v1.0");
     lv_obj_set_style_text_font(lbl_ver, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(lbl_ver, ZOTTI_GRAY_DARK, 0);
+    lv_obj_set_style_text_color(lbl_ver, lv_color_hex(0x1A3A5A), 0);
     lv_obj_align(lbl_ver, LV_ALIGN_BOTTOM_RIGHT, -15, -10);
 
-    // Barra de loading na parte inferior
-    lv_obj_t *bar = lv_bar_create(scr);
-    lv_obj_set_size(bar, 400, 4);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, -30);
-    lv_obj_set_style_bg_color(bar, ZOTTI_GRAY_DARK, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, ZOTTI_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar, 2, LV_PART_MAIN);
-    lv_obj_set_style_radius(bar, 2, LV_PART_INDICATOR);
-    lv_bar_set_range(bar, 0, 100);
-    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
-
-    // Anima a barra de 0 a 100 em SPLASH_TIME_MS
-    lv_anim_t a_bar;
-    lv_anim_init(&a_bar);
-    lv_anim_set_var(&a_bar, bar);
-    lv_anim_set_exec_cb(&a_bar, bar_anim_cb);
-    lv_anim_set_values(&a_bar, 0, 100);
-    lv_anim_set_duration(&a_bar, SPLASH_TIME_MS - 200);
-    lv_anim_start(&a_bar);
-
-    // Carrega a tela imediatamente (sem animação pesada de FADE)
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    ESP_LOGI(TAG, "Tela splash carregada no display");
 
-    // Timer único para ir ao menu
-    lv_timer_t *t = lv_timer_create(splash_timer_cb, SPLASH_TIME_MS, NULL);
+    lv_timer_t *t = lv_timer_create(splash_timer_cb, SPLASH_DURATION_MS, NULL);
     lv_timer_set_repeat_count(t, 1);
-    ESP_LOGI(TAG, "Timer %dms iniciado — aguardando transicao para menu", SPLASH_TIME_MS);
+
+    ESP_LOGI(TAG, "Splash criado — %dms para o menu", SPLASH_DURATION_MS);
 }
 
-// Mantida por compatibilidade — apenas delega
 void ui_splash_create(void)
 {
     ui_splash_show();

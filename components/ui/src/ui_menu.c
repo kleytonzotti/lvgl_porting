@@ -5,21 +5,28 @@
 
 static const char *TAG = "UI_MENU";
 
-// ── Estrutura de cada item do menu ───────────────────────────
-typedef struct {
-    const char *icon;
-    const char *label;
-    void (*action)(void);
-} menu_item_t;
+// ── Navegação adiada — evita troca de tela mid-frame ─────────
+// lv_async_call agenda a função para o INÍCIO do próximo ciclo
+// lv_timer_handler(), antes de qualquer renderização. Isso garante
+// que a tela antiga seja exibida completamente antes de trocar.
+static void ui_nav_async_cb(void *fn_ptr)
+{
+    ((void (*)(void))((uintptr_t)fn_ptr))();
+}
+
+void ui_nav(void (*fn)(void))
+{
+    lv_async_call(ui_nav_async_cb, (void *)(uintptr_t)fn);
+}
 
 // ── Callbacks de navegação ────────────────────────────────────
-static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ESP_LOGI(TAG, "-> Dashboard");   ui_screen_dashboard_show(); }
-static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ESP_LOGI(TAG, "-> Scanner");     ui_screen_scanner_show(); }
-static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ESP_LOGI(TAG, "-> ECU");         ui_screen_ecu_show(); }
-static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ESP_LOGI(TAG, "-> CAN");         ui_screen_can_show(); }
-static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "-> DataLogger");  ui_screen_datalogger_show(); }
-static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ESP_LOGI(TAG, "-> Config");      ui_screen_config_show(); }
-static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ESP_LOGI(TAG, "-> Sistema");     ui_screen_sistema_show(); }
+static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_screen_dashboard_show); }
+static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_scanner_show); }
+static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_ecu_show); }
+static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_can_show); }
+static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalogger_show); }
+static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config_show); }
+static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
 
 // ── Cria um botão do menu ─────────────────────────────────────
 static void create_menu_btn(lv_obj_t *parent, const char *icon,

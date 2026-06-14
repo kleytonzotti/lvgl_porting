@@ -32,4 +32,5 @@ idf_component_register(
         app_core
         lvgl__lvgl
         esp_common
+        assets
 )

@@ -11,7 +11,7 @@ static lv_obj_t *s_list    = NULL;
 static lv_obj_t *s_lbl_count = NULL;
 static int32_t s_entry_count = 0;
 
-static void back_cb(lv_event_t *e)  { LV_UNUSED(e); ui_menu_show(); }
+static void back_cb(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
 static void toggle_log_cb(lv_event_t *e)
 {

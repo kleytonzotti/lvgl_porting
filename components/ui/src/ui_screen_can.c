@@ -5,7 +5,7 @@
 
 static const char *TAG = "UI_CAN";
 
-static void back_cb(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "<- Voltando ao menu"); ui_menu_show(); }
+static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
 // Abas internas do módulo CAN
 static void build_sniffer_tab(lv_obj_t *parent)

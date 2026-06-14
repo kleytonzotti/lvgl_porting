@@ -14,6 +14,9 @@ void ui_init(void);
 void ui_splash_show(void);
 void ui_menu_show(void);
 
+// ----- Navegação adiada (evita corrupção mid-frame) -----
+void ui_nav(void (*fn)(void));
+
 // ----- Sub-telas -----
 void ui_screen_dashboard_show(void);
 void ui_screen_scanner_show(void);

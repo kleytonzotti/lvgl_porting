@@ -7,20 +7,20 @@
 
 static const char *TAG = "UI_SISTEMA";
 
-static void back_cb(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "<- Voltando ao menu"); ui_menu_show(); }
+static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
+
+static void touch_diag_back_async(void *d) { LV_UNUSED(d); ui_screen_sistema_show(); }
 
 // Volta do touch diagnostic → limpa o callback antes de sair
 static void touch_diag_back_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    bsp_touch_register_cb(NULL);
-    ui_screen_sistema_show();
+    bsp_touch_register_cb(NULL);            // imediato: limpa callback de toque
+    lv_async_call(touch_diag_back_async, NULL); // adiado: troca de tela no próximo ciclo
 }
 
-static void touch_diag_cb(lv_event_t *e)
+static void touch_diag_show(void)
 {
-    LV_UNUSED(e);
-
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -65,6 +65,12 @@ static void touch_diag_cb(lv_event_t *e)
     ui_screen_touch_create(content);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+}
+
+static void touch_diag_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    ui_nav(touch_diag_show);
 }
 
 static lv_obj_t *add_info_row(lv_obj_t *parent, const char *key, const char *value)

@@ -77,7 +77,7 @@ static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
 }
 
 // ── Callback voltar ao menu ───────────────────────────────────
-static void back_cb(lv_event_t *e) { LV_UNUSED(e); ESP_LOGI(TAG, "<- Voltando ao menu"); ui_menu_show(); }
+static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
 // ── Dashboard ─────────────────────────────────────────────────
 void ui_screen_dashboard_show(void)
