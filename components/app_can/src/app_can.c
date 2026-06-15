@@ -90,7 +90,8 @@ static void format_csv_line(const twai_message_t *msg, uint32_t ms,
     }
 }
 
-esp_err_t app_can_sd_mount(void)
+// Internal mount — format_if_failed=true is used only when user explicitly requests format.
+static esp_err_t do_sd_mount(bool format_if_failed)
 {
     if (s_sd_mounted) return ESP_OK;
 
@@ -119,7 +120,7 @@ esp_err_t app_can_sd_mount(void)
     slot_cfg.gpio_cs = SDSPI_SLOT_NO_CS;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
-        .format_if_mount_failed = false,
+        .format_if_mount_failed = format_if_failed,
         .max_files              = 4,
         .allocation_unit_size   = 16 * 1024,
     };
@@ -128,9 +129,14 @@ esp_err_t app_can_sd_mount(void)
                                              &slot_cfg, &mount_cfg, &s_sd_card);
     if (err == ESP_OK) {
         s_sd_mounted = true;
-        ESP_LOGI(TAG, "SD mounted at %s", APP_CAN_SD_MOUNT);
+        ESP_LOGI(TAG, "SD mounted (format_if_failed=%d)", format_if_failed);
     }
     return err;
+}
+
+esp_err_t app_can_sd_mount(void)
+{
+    return do_sd_mount(false);
 }
 
 static void find_new_log_path(char *out, size_t sz)
@@ -487,9 +493,13 @@ bool app_can_sd_delete_file(const char *path)
 
 esp_err_t app_can_sd_format(void)
 {
-    if (!s_sd_mounted || !s_sd_card) return ESP_ERR_INVALID_STATE;
+    if (!s_sd_mounted) {
+        // Card not mounted: attempt mount with format_if_mount_failed=true.
+        // This handles exFAT, NTFS, or corrupted FAT — ESP-IDF reformats to FAT32.
+        return do_sd_mount(true);
+    }
 
-    // Close any open log file before formatting
+    // Already mounted: format explicitly.
     xSemaphoreTake(s_lock, portMAX_DELAY);
     close_log_file_locked();
     xSemaphoreGive(s_lock);

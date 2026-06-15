@@ -66,7 +66,6 @@ static void go_up_async(void *arg)    { LV_UNUSED(arg); go_up(); }
 
 static void format_confirm_cb(lv_event_t *e)
 {
-    // Close the modal (parent overlay)
     lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
     if (overlay) lv_obj_delete(overlay);
 
@@ -75,7 +74,13 @@ static void format_confirm_cb(lv_event_t *e)
     esp_err_t err = app_can_sd_format();
 
     if (s_lbl_status) {
-        lv_label_set_text(s_lbl_status, err == ESP_OK ? "Formatado!" : "Erro ao formatar!");
+        if (err == ESP_OK) {
+            lv_label_set_text(s_lbl_status, "Formatado com sucesso!");
+        } else if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_TIMEOUT) {
+            lv_label_set_text(s_lbl_status, "Cartao nao encontrado!");
+        } else {
+            lv_label_set_text_fmt(s_lbl_status, "Erro: 0x%x", (unsigned)err);
+        }
     }
 
     // Return to root and reload
