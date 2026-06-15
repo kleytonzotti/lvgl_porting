@@ -9,115 +9,229 @@
 
 static const char *TAG = "UI_SD";
 
-#define MAX_FILES 32
+#define MAX_ENTRIES  48
+#define SD_ROOT      "/sdcard"
 
 // ─────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────
 static lv_obj_t *s_list       = NULL;
-static lv_obj_t *s_lbl_empty  = NULL;
 static lv_obj_t *s_lbl_status = NULL;
+static lv_obj_t *s_lbl_path   = NULL;
+static lv_obj_t *s_lbl_back   = NULL;
 
-static app_can_sd_file_t s_files[MAX_FILES];
-static int                s_file_count = 0;
+static app_can_sd_entry_t s_entries[MAX_ENTRIES];
+static int                s_entry_count   = 0;
 static void             (*s_back_fn)(void) = NULL;
+static char               s_current_path[128];
 
 // ─────────────────────────────────────────────────────
-// Helpers
+// Forward declarations
 // ─────────────────────────────────────────────────────
-
 static void build_list(void);
+static void reload_current_dir(void);
+
+// ─────────────────────────────────────────────────────
+// Path helpers
+// ─────────────────────────────────────────────────────
+
+static bool at_root(void)
+{
+    return (strcmp(s_current_path, SD_ROOT) == 0);
+}
+
+static void go_up(void)
+{
+    char *last = strrchr(s_current_path, '/');
+    if (last && (last - s_current_path) >= (int)strlen(SD_ROOT)) {
+        *last = '\0';
+        if (strlen(s_current_path) < strlen(SD_ROOT)) {
+            strncpy(s_current_path, SD_ROOT, sizeof(s_current_path) - 1);
+        }
+    }
+    reload_current_dir();
+}
+
+// ─────────────────────────────────────────────────────
+// Async reload (called from enter/delete/back event
+// callbacks so that LVGL finishes event dispatch before
+// we delete children of the list)
+// ─────────────────────────────────────────────────────
+
+static void reload_async(void *arg)
+{
+    LV_UNUSED(arg);
+    reload_current_dir();
+}
+
+static void go_up_async(void *arg)
+{
+    LV_UNUSED(arg);
+    go_up();
+}
+
+// ─────────────────────────────────────────────────────
+// Event callbacks
+// ─────────────────────────────────────────────────────
 
 static void screen_delete_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    s_list = s_lbl_empty = s_lbl_status = NULL;
-    s_file_count = 0;
+    s_list = s_lbl_status = s_lbl_path = s_lbl_back = NULL;
+    s_entry_count = 0;
 }
 
 static void back_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    if (s_back_fn) ui_nav(s_back_fn);
+    if (at_root()) {
+        if (s_back_fn) ui_nav(s_back_fn);
+    } else {
+        lv_async_call(go_up_async, NULL);
+    }
+}
+
+static void enter_dir_cb(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= s_entry_count) return;
+    if (!s_entries[idx].is_dir) return;
+
+    size_t cur_len  = strlen(s_current_path);
+    size_t name_len = strlen(s_entries[idx].name);
+    if (cur_len + 1 + name_len + 1 <= sizeof(s_current_path)) {
+        s_current_path[cur_len] = '/';
+        memcpy(s_current_path + cur_len + 1, s_entries[idx].name, name_len + 1);
+    }
+    lv_async_call(reload_async, NULL);
 }
 
 static void delete_cb(lv_event_t *e)
 {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (idx < 0 || idx >= s_file_count) return;
+    if (idx < 0 || idx >= s_entry_count) return;
+    if (s_entries[idx].is_dir) return;
 
-    char full_path[64];
-    snprintf(full_path, sizeof(full_path), "/sdcard/%s", s_files[idx].name);
-    bool ok = app_can_sd_delete_file(full_path);
-    ESP_LOGI(TAG, "Delete %s: %s", full_path, ok ? "OK" : "FAIL");
+    char full_path[172];   // 128 (path) + 1 (/) + 40 (name) + 3 pad
+    snprintf(full_path, sizeof(full_path), "%s/%s", s_current_path, s_entries[idx].name);
+    app_can_sd_delete_file(full_path);
 
-    // Refresh list
-    s_file_count = app_can_sd_list_csv(s_files, MAX_FILES);
-    if (s_list) {
-        lv_obj_clean(s_list);
+    lv_async_call(reload_async, NULL);
+}
+
+// ─────────────────────────────────────────────────────
+// List & path label
+// ─────────────────────────────────────────────────────
+
+static void update_header_labels(void)
+{
+    // Path breadcrumb: show the part after /sdcard
+    if (s_lbl_path) {
+        const char *rel = s_current_path + strlen(SD_ROOT);
+        lv_label_set_text_fmt(s_lbl_path, "SD:%s%s",
+                              at_root() ? "" : rel,
+                              at_root() ? "/" : "");
     }
-    build_list();
+
+    // Back button label
+    if (s_lbl_back) {
+        lv_label_set_text(s_lbl_back,
+                          at_root() ? LV_SYMBOL_LEFT " Voltar"
+                                    : LV_SYMBOL_LEFT " ..");
+    }
 }
 
 static void build_list(void)
 {
     if (!s_list) return;
 
-    if (s_lbl_status) {
-        if (s_file_count < 0) {
-            lv_label_set_text(s_lbl_status, "SD nao montado ou erro ao ler.");
-        } else {
-            lv_label_set_text_fmt(s_lbl_status,
-                "%d arquivo(s) CSV  |  /sdcard/", s_file_count);
-        }
-    }
-
-    if (s_file_count <= 0) {
-        if (s_lbl_empty) lv_obj_clear_flag(s_lbl_empty, LV_OBJ_FLAG_HIDDEN);
+    if (s_entry_count <= 0) {
+        lv_obj_t *lbl = lv_label_create(s_list);
+        lv_label_set_text(lbl, s_entry_count < 0 ? "SD nao montado ou erro ao ler."
+                                                   : "Pasta vazia.");
+        lv_obj_set_style_text_color(lbl, ZOTTI_GRAY, 0);
+        lv_obj_set_style_text_font(lbl, ZOTTI_FONT_SMALL, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         return;
     }
-    if (s_lbl_empty) lv_obj_add_flag(s_lbl_empty, LV_OBJ_FLAG_HIDDEN);
 
-    for (int i = 0; i < s_file_count; i++) {
-        // Row container
+    for (int i = 0; i < s_entry_count; i++) {
+        bool is_dir = s_entries[i].is_dir;
+
         lv_obj_t *row = lv_obj_create(s_list);
         lv_obj_set_size(row, 760, 44);
-        lv_obj_set_style_bg_color(row, (i % 2 == 0) ? ZOTTI_BG_CARD : lv_color_hex(0x06101C), 0);
+        lv_obj_set_style_bg_color(row,
+            (i % 2 == 0) ? ZOTTI_BG_CARD : lv_color_hex(0x06101C), 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_radius(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-        // File icon + name
+        // Icon + name
         lv_obj_t *lbl_name = lv_label_create(row);
-        lv_label_set_text_fmt(lbl_name, LV_SYMBOL_FILE "  %s", s_files[i].name);
+        lv_label_set_text_fmt(lbl_name,
+            is_dir ? LV_SYMBOL_DIRECTORY "  %s" : LV_SYMBOL_FILE "  %s",
+            s_entries[i].name);
         lv_obj_set_style_text_font(lbl_name, ZOTTI_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(lbl_name, lv_color_hex(0xBDEEFF), 0);
+        lv_obj_set_style_text_color(lbl_name,
+            is_dir ? ZOTTI_ACCENT : lv_color_hex(0xBDEEFF), 0);
         lv_obj_align(lbl_name, LV_ALIGN_LEFT_MID, 12, 0);
 
-        // Size
-        lv_obj_t *lbl_size = lv_label_create(row);
-        if (s_files[i].size_kb == 0) {
-            lv_label_set_text(lbl_size, "< 1 KB");
-        } else {
-            lv_label_set_text_fmt(lbl_size, "%lu KB", (unsigned long)s_files[i].size_kb);
-        }
-        lv_obj_set_style_text_font(lbl_size, ZOTTI_FONT_TINY, 0);
-        lv_obj_set_style_text_color(lbl_size, ZOTTI_GRAY, 0);
-        lv_obj_align(lbl_size, LV_ALIGN_RIGHT_MID, -110, 0);
+        if (is_dir) {
+            // Entire row is clickable
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(row, enter_dir_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-        // Delete button
-        lv_obj_t *btn_del = lv_btn_create(row);
-        lv_obj_set_size(btn_del, 90, 30);
-        lv_obj_align(btn_del, LV_ALIGN_RIGHT_MID, -8, 0);
-        lv_obj_set_style_bg_color(btn_del, lv_color_hex(0x4A0000), 0);
-        lv_obj_set_style_radius(btn_del, 4, 0);
-        lv_obj_add_event_cb(btn_del, delete_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        lv_obj_t *lbl_del = lv_label_create(btn_del);
-        lv_label_set_text(lbl_del, LV_SYMBOL_TRASH " DEL");
-        lv_obj_set_style_text_font(lbl_del, ZOTTI_FONT_TINY, 0);
-        lv_obj_center(lbl_del);
+            lv_obj_t *lbl_arr = lv_label_create(row);
+            lv_label_set_text(lbl_arr, LV_SYMBOL_RIGHT);
+            lv_obj_set_style_text_font(lbl_arr, ZOTTI_FONT_SMALL, 0);
+            lv_obj_set_style_text_color(lbl_arr, ZOTTI_GRAY, 0);
+            lv_obj_align(lbl_arr, LV_ALIGN_RIGHT_MID, -12, 0);
+        } else {
+            // File size
+            lv_obj_t *lbl_size = lv_label_create(row);
+            if (s_entries[i].size_kb == 0) {
+                lv_label_set_text(lbl_size, "< 1 KB");
+            } else {
+                lv_label_set_text_fmt(lbl_size, "%lu KB",
+                                      (unsigned long)s_entries[i].size_kb);
+            }
+            lv_obj_set_style_text_font(lbl_size, ZOTTI_FONT_TINY, 0);
+            lv_obj_set_style_text_color(lbl_size, ZOTTI_GRAY, 0);
+            lv_obj_align(lbl_size, LV_ALIGN_RIGHT_MID, -110, 0);
+
+            // Delete button
+            lv_obj_t *btn_del = lv_btn_create(row);
+            lv_obj_set_size(btn_del, 90, 30);
+            lv_obj_align(btn_del, LV_ALIGN_RIGHT_MID, -8, 0);
+            lv_obj_set_style_bg_color(btn_del, lv_color_hex(0x4A0000), 0);
+            lv_obj_set_style_radius(btn_del, 4, 0);
+            lv_obj_add_event_cb(btn_del, delete_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+            lv_obj_t *lbl_del = lv_label_create(btn_del);
+            lv_label_set_text(lbl_del, LV_SYMBOL_TRASH " DEL");
+            lv_obj_set_style_text_font(lbl_del, ZOTTI_FONT_TINY, 0);
+            lv_obj_center(lbl_del);
+        }
     }
+}
+
+static void reload_current_dir(void)
+{
+    s_entry_count = app_can_sd_list_dir(s_current_path, s_entries, MAX_ENTRIES);
+
+    if (s_lbl_status) {
+        if (s_entry_count < 0) {
+            lv_label_set_text(s_lbl_status, "Erro");
+        } else {
+            lv_label_set_text_fmt(s_lbl_status, "%d item(s)", s_entry_count);
+        }
+    }
+
+    if (s_list) lv_obj_clean(s_list);
+    update_header_labels();
+    build_list();
+
+    ESP_LOGI(TAG, "SD dir '%s': %d entries", s_current_path, s_entry_count);
 }
 
 // ─────────────────────────────────────────────────────
@@ -126,8 +240,10 @@ static void build_list(void)
 
 void ui_screen_sd_browser_show(void (*back_fn)(void))
 {
-    s_back_fn    = back_fn ? back_fn : ui_menu_show;
-    s_file_count = 0;
+    s_back_fn = back_fn ? back_fn : ui_menu_show;
+    strncpy(s_current_path, SD_ROOT, sizeof(s_current_path) - 1);
+    s_current_path[sizeof(s_current_path) - 1] = '\0';
+    s_entry_count = 0;
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
@@ -149,18 +265,18 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
     lv_obj_set_style_bg_color(btn_back, ZOTTI_ACCENT_DIM, 0);
     lv_obj_set_style_radius(btn_back, 4, 0);
     lv_obj_add_event_cb(btn_back, back_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *lbl = lv_label_create(btn_back);
-    lv_label_set_text(lbl, LV_SYMBOL_LEFT " Voltar");
-    lv_obj_set_style_text_font(lbl, ZOTTI_FONT_TINY, 0);
-    lv_obj_center(lbl);
+    s_lbl_back = lv_label_create(btn_back);
+    lv_label_set_text(s_lbl_back, LV_SYMBOL_LEFT " Voltar");
+    lv_obj_set_style_text_font(s_lbl_back, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(s_lbl_back);
 
     lv_obj_t *lbl_title = lv_label_create(hdr);
-    lv_label_set_text(lbl_title, LV_SYMBOL_SAVE "  ARQUIVOS SD");
+    lv_label_set_text(lbl_title, LV_SYMBOL_DIRECTORY "  ARQUIVOS SD");
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Status bar ───────────────────────────────────
+    // ── Status bar (path + count) ─────────────────────
     lv_obj_t *status_bar = lv_obj_create(scr);
     lv_obj_set_size(status_bar, 800, 30);
     lv_obj_set_pos(status_bar, 0, 42);
@@ -168,13 +284,19 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
     lv_obj_set_style_border_width(status_bar, 0, 0);
     lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
 
+    s_lbl_path = lv_label_create(status_bar);
+    lv_label_set_text(s_lbl_path, "SD:/");
+    lv_obj_set_style_text_font(s_lbl_path, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_lbl_path, ZOTTI_ACCENT, 0);
+    lv_obj_align(s_lbl_path, LV_ALIGN_LEFT_MID, 12, 0);
+
     s_lbl_status = lv_label_create(status_bar);
     lv_label_set_text(s_lbl_status, "Carregando...");
     lv_obj_set_style_text_font(s_lbl_status, ZOTTI_FONT_TINY, 0);
     lv_obj_set_style_text_color(s_lbl_status, ZOTTI_GRAY, 0);
-    lv_obj_align(s_lbl_status, LV_ALIGN_LEFT_MID, 12, 0);
+    lv_obj_align(s_lbl_status, LV_ALIGN_RIGHT_MID, -12, 0);
 
-    // ── File list (scrollable) ────────────────────────
+    // ── File/folder list (scrollable) ────────────────
     lv_obj_t *list_cont = lv_obj_create(scr);
     lv_obj_set_size(list_cont, 800, 408);
     lv_obj_set_pos(list_cont, 0, 72);
@@ -189,22 +311,9 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
 
     s_list = list_cont;
 
-    // Empty state label
-    s_lbl_empty = lv_label_create(list_cont);
-    lv_label_set_text(s_lbl_empty, "Nenhum arquivo .csv encontrado no SD.\n\n"
-                                   "Inicie o Sniffer para gravar dados CAN.");
-    lv_obj_set_style_text_color(s_lbl_empty, ZOTTI_GRAY, 0);
-    lv_obj_set_style_text_font(s_lbl_empty, ZOTTI_FONT_SMALL, 0);
-    lv_obj_set_style_text_align(s_lbl_empty, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_add_flag(s_lbl_empty, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_center(s_lbl_empty);
-
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 
-    // Load file list (mount SD first if not already mounted)
+    // Mount and load root
     app_can_sd_mount();
-    s_file_count = app_can_sd_list_csv(s_files, MAX_FILES);
-    build_list();
-
-    ESP_LOGI(TAG, "SD browser: %d files", s_file_count);
+    reload_current_dir();
 }

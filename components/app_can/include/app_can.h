@@ -30,11 +30,18 @@ typedef struct {
     uint16_t hz_x10;     // frequency * 10  (e.g. 105 = 10.5 Hz)
 } app_can_id_entry_t;
 
-// SD file entry for browser.
+// SD file entry for browser (CSV-only list — kept for backward compat).
 typedef struct {
     char     name[40];   // filename only (e.g. "can_001.csv")
     uint32_t size_kb;
 } app_can_sd_file_t;
+
+// Generic directory entry for full SD browser.
+typedef struct {
+    char     name[40];
+    uint32_t size_kb;
+    bool     is_dir;
+} app_can_sd_entry_t;
 
 typedef struct {
     app_can_state_t state;
@@ -70,6 +77,7 @@ const char *app_can_sniffer_log_path(void);
 esp_err_t app_can_sd_mount(void);
 bool      app_can_sd_is_mounted(void);
 int       app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
+int       app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_entries);
 bool      app_can_sd_delete_file(const char *path);
 
 #ifdef __cplusplus

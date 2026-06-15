@@ -447,6 +447,38 @@ int app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files)
     return count;
 }
 
+int app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_entries)
+{
+    if (!s_sd_mounted || !out || !path) return -1;
+
+    DIR *dir = opendir(path);
+    if (!dir) return -1;
+
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && (uint32_t)count < max_entries) {
+        const char *name = ent->d_name;
+        if (name[0] == '.') continue;   // skip . and ..
+
+        snprintf(out[count].name, sizeof(out[count].name), "%.*s",
+                 (int)(sizeof(out[count].name) - 1), name);
+
+        char full[172];   // 128 (path) + 1 (/) + 40 (name) + 3 pad
+        snprintf(full, sizeof(full), "%s/%s", path, out[count].name);
+        struct stat st;
+        if (stat(full, &st) == 0) {
+            out[count].is_dir  = S_ISDIR(st.st_mode);
+            out[count].size_kb = out[count].is_dir ? 0 : (uint32_t)(st.st_size / 1024);
+        } else {
+            out[count].is_dir  = (ent->d_type == DT_DIR);
+            out[count].size_kb = 0;
+        }
+        count++;
+    }
+    closedir(dir);
+    return count;
+}
+
 bool app_can_sd_delete_file(const char *path)
 {
     if (!path) return false;
