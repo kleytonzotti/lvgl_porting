@@ -7,10 +7,10 @@ static const char *TAG = "UI_CAN";
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
-// Abas internas do módulo CAN
+// Abas internas do modulo CAN.
 static void build_sniffer_tab(lv_obj_t *parent)
 {
-    // Cabeçalho da tabela
+    // Cabecalho da tabela.
     lv_obj_t *hdr = lv_obj_create(parent);
     lv_obj_set_size(hdr, 740, 32);
     lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -41,8 +41,8 @@ static void build_decoder_tab(lv_obj_t *parent)
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, "Decodificador CAN\n\n"
                            "Interpreta sinais do barramento:\n"
-                           "  RPM, Velocidade, Temperatura, Combustível...\n\n"
-                           "Selecione o perfil do veículo em Configurações.");
+                           "  RPM, Velocidade, Temperatura, Combustivel...\n\n"
+                           "Selecione o perfil do veiculo em Configuracoes.");
     lv_obj_set_style_text_color(lbl, ZOTTI_GRAY, 0);
     lv_obj_set_style_text_font(lbl, ZOTTI_FONT_TINY, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 10, 10);
@@ -52,7 +52,7 @@ static void build_gateway_tab(lv_obj_t *parent)
 {
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, "CAN Gateway\n\n"
-                           "Recebe mensagens → Interpreta → Encaminha.\n\n"
+                           "Recebe mensagens -> Interpreta -> Encaminha.\n\n"
                            "Status: INATIVO");
     lv_obj_set_style_text_color(lbl, ZOTTI_GRAY, 0);
     lv_obj_set_style_text_font(lbl, ZOTTI_FONT_TINY, 0);
@@ -66,7 +66,7 @@ void ui_screen_can_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -98,7 +98,7 @@ void ui_screen_can_show(void)
     lv_obj_set_style_text_color(lbl_can_status, ZOTTI_RED, 0);
     lv_obj_align(lbl_can_status, LV_ALIGN_RIGHT_MID, -10, 0);
 
-    // ── Filtros ───────────────────────────────────────────────
+    // Filtros.
     lv_obj_t *filter_bar = lv_obj_create(scr);
     lv_obj_set_size(filter_bar, 800, 44);
     lv_obj_set_pos(filter_bar, 0, 40);
@@ -122,7 +122,7 @@ void ui_screen_can_show(void)
         lv_obj_center(lbl);
     }
 
-    // ── Tabview: Sniffer | Decoder | Gateway ─────────────────
+    // Tabview: Sniffer | Decoder | Gateway.
     lv_obj_t *tv = lv_tabview_create(scr);
     lv_obj_set_size(tv, 800, 312);
     lv_obj_set_pos(tv, 0, 168);

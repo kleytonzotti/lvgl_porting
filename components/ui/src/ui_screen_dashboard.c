@@ -5,7 +5,7 @@
 
 static const char *TAG = "UI_DASHBOARD";
 
-// ── Referências de widgets para atualização futura ───────────
+// Referencias de widgets para atualizacao futura.
 static lv_obj_t *s_arc_rpm     = NULL;
 static lv_obj_t *s_lbl_rpm     = NULL;
 static lv_obj_t *s_lbl_speed   = NULL;
@@ -17,7 +17,7 @@ static lv_obj_t *s_lbl_ect     = NULL;
 static lv_obj_t *s_lbl_iat     = NULL;
 static lv_obj_t *s_lbl_batt    = NULL;
 
-// ── Atualiza os dados da dashboard ───────────────────────────
+// Atualiza os dados da dashboard.
 void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
                                  int32_t map_kpa, int32_t tps_pct,
                                  float afr, int32_t ect_c,
@@ -32,21 +32,21 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     lv_label_set_text_fmt(s_lbl_map,  "%ld kPa", (long)map_kpa);
     lv_label_set_text_fmt(s_lbl_tps,  "%ld%%", (long)tps_pct);
     lv_label_set_text_fmt(s_lbl_afr,  "%.1f", afr);
-    lv_label_set_text_fmt(s_lbl_ect,  "%ld°C", (long)ect_c);
-    lv_label_set_text_fmt(s_lbl_iat,  "%ld°C", (long)iat_c);
+    lv_label_set_text_fmt(s_lbl_ect,  "%ld C", (long)ect_c);
+    lv_label_set_text_fmt(s_lbl_iat,  "%ld C", (long)iat_c);
     lv_label_set_text_fmt(s_lbl_batt, "%.1fV", batt_v);
 
-    // Cor do ECT: verde < 90°C, amarelo 90-105°C, vermelho > 105°C
+    // Cor do ECT: verde < 90 C, amarelo 90-105 C, vermelho > 105 C.
     lv_color_t ect_color = (ect_c < 90)  ? ZOTTI_GREEN  :
                            (ect_c < 105) ? ZOTTI_YELLOW : ZOTTI_RED;
     lv_obj_set_style_text_color(s_lbl_ect, ect_color, 0);
 
-    // Cor do AFR: verde se próximo de 14.7
+    // Cor do AFR: verde se proximo de 14.7.
     lv_color_t afr_color = (afr > 14.0f && afr < 15.4f) ? ZOTTI_GREEN : ZOTTI_YELLOW;
     lv_obj_set_style_text_color(s_lbl_afr, afr_color, 0);
 }
 
-// ── Card de sensor (lado direito) ────────────────────────────
+// Card de sensor (lado direito).
 static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
                                      int32_t y_pos)
 {
@@ -66,7 +66,7 @@ static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
     lv_obj_set_style_text_color(lbl_name, ZOTTI_GRAY, 0);
     lv_obj_align(lbl_name, LV_ALIGN_LEFT_MID, 8, -8);
 
-    // Label do valor (retornado para atualização)
+    // Label do valor retornado para atualizacao.
     lv_obj_t *lbl_val = lv_label_create(card);
     lv_label_set_text(lbl_val, "---");
     lv_obj_set_style_text_font(lbl_val, ZOTTI_FONT_MEDIUM, 0);
@@ -76,10 +76,10 @@ static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
     return lbl_val;
 }
 
-// ── Callback voltar ao menu ───────────────────────────────────
+// Callback voltar ao menu.
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
-// ── Dashboard ─────────────────────────────────────────────────
+// Dashboard.
 void ui_screen_dashboard_show(void)
 {
     s_arc_rpm   = NULL;
@@ -91,7 +91,7 @@ void ui_screen_dashboard_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -119,7 +119,7 @@ void ui_screen_dashboard_show(void)
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Coluna esquerda: RPM (0–440px largura, 40–480px altura) ─
+    // Coluna esquerda: RPM.
     lv_obj_t *col_left = lv_obj_create(scr);
     lv_obj_set_size(col_left, 260, 440);
     lv_obj_set_pos(col_left, 0, 40);
@@ -197,7 +197,7 @@ void ui_screen_dashboard_show(void)
     lv_bar_set_range(s_bar_tps, 0, 100);
     lv_bar_set_value(s_bar_tps, 0, LV_ANIM_OFF);
 
-    // ── Coluna central: Velocidade ────────────────────────────
+    // Coluna central: Velocidade.
     lv_obj_t *col_mid = lv_obj_create(scr);
     lv_obj_set_size(col_mid, 280, 440);
     lv_obj_set_pos(col_mid, 260, 40);
@@ -244,7 +244,7 @@ void ui_screen_dashboard_show(void)
     lv_obj_set_style_text_color(lbl_status, ZOTTI_GRAY, 0);
     lv_obj_align(lbl_status, LV_ALIGN_BOTTOM_MID, 0, -8);
 
-    // ── Coluna direita: Sensores ──────────────────────────────
+    // Coluna direita: Sensores.
     lv_obj_t *col_right = lv_obj_create(scr);
     lv_obj_set_size(col_right, 260, 440);
     lv_obj_set_pos(col_right, 540, 40);

@@ -23,7 +23,7 @@ void app_main(void)
     app_core_init();
     ESP_LOGI(TAG, "[2/4] App core OK");
 
-    // 3) UI — cria a splash screen dentro do mutex LVGL
+    // 3) UI: cria a splash screen dentro do mutex LVGL.
     ESP_LOGI(TAG, "[3/4] UI init...");
     if (bsp_lvgl_lock(-1)) {
         ui_init();
@@ -33,10 +33,10 @@ void app_main(void)
 
     // 4) Aguarda o LVGL renderizar o primeiro frame antes de ligar o backlight.
     //    Com FREERTOS_HZ=100, 1 tick = 10ms. 10 ticks = 100ms garante
-    //    que o primeiro frame (splash) já está no framebuffer PSRAM.
+    //    que o primeiro frame (splash) ja esta no framebuffer PSRAM.
     vTaskDelay(10);
     ESP_ERROR_CHECK(bsp_backlight_set(true));
-    ESP_LOGI(TAG, "[4/4] Backlight ON — sistema iniciado");
+    ESP_LOGI(TAG, "[4/4] Backlight ON - sistema iniciado");
 
     while (1) {
         bsp_lvgl_handler();

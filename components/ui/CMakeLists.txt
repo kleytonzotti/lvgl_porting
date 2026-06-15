@@ -10,6 +10,7 @@ idf_component_register(
         "src/ui_screen_scanner.c"
         "src/ui_screen_ecu.c"
         "src/ui_screen_can.c"
+        "src/ui_screen_can_sniffer.c"
         "src/ui_screen_datalogger.c"
         "src/ui_screen_config.c"
         "src/ui_screen_sistema.c"
@@ -30,6 +31,7 @@ idf_component_register(
         bsp_waveshare_43
         app_io
         app_core
+        app_can
         lvgl__lvgl
         esp_common
         assets

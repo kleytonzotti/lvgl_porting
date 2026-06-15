@@ -5,10 +5,8 @@
 
 static const char *TAG = "UI_MENU";
 
-// ── Navegação adiada — evita troca de tela mid-frame ─────────
-// lv_async_call agenda a função para o INÍCIO do próximo ciclo
-// lv_timer_handler(), antes de qualquer renderização. Isso garante
-// que a tela antiga seja exibida completamente antes de trocar.
+// Navegacao adiada: evita troca de tela mid-frame.
+// lv_async_call agenda a funcao para o inicio do proximo ciclo.
 static void ui_nav_async_cb(void *fn_ptr)
 {
     ((void (*)(void))((uintptr_t)fn_ptr))();
@@ -19,7 +17,7 @@ void ui_nav(void (*fn)(void))
     lv_async_call(ui_nav_async_cb, (void *)(uintptr_t)fn);
 }
 
-// ── Callbacks de navegação ────────────────────────────────────
+// Callbacks de navegacao.
 static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_screen_dashboard_show); }
 static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_scanner_show); }
 static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_ecu_show); }
@@ -27,8 +25,9 @@ static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_can_sh
 static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalogger_show); }
 static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config_show); }
 static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
+static void cb_secret_sniffer(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_can_sniffer_show); }
 
-// ── Cria um botão do menu ─────────────────────────────────────
+// Cria um botao do menu.
 static void create_menu_btn(lv_obj_t *parent, const char *icon,
                              const char *label, lv_event_cb_t cb)
 {
@@ -42,7 +41,7 @@ static void create_menu_btn(lv_obj_t *parent, const char *icon,
     lv_obj_set_style_radius(btn, 8, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Barra colorida no topo do botão
+    // Barra colorida no topo do botao.
     lv_obj_t *top_bar = lv_obj_create(btn);
     lv_obj_set_size(top_bar, 170, 4);
     lv_obj_set_pos(top_bar, 0, 0);
@@ -52,7 +51,7 @@ static void create_menu_btn(lv_obj_t *parent, const char *icon,
     lv_obj_set_style_radius(top_bar, 0, 0);
     lv_obj_clear_flag(top_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    // Ícone
+    // Icone.
     lv_obj_t *lbl_icon = lv_label_create(btn);
     lv_label_set_text(lbl_icon, icon);
     lv_obj_set_style_text_font(lbl_icon, ZOTTI_FONT_LARGE, 0);
@@ -69,7 +68,7 @@ static void create_menu_btn(lv_obj_t *parent, const char *icon,
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
 }
 
-// ── Menu Principal ────────────────────────────────────────────
+// Menu principal.
 void ui_menu_show(void)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -77,7 +76,7 @@ void ui_menu_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 50);
     lv_obj_set_pos(header, 0, 0);
@@ -94,6 +93,8 @@ void ui_menu_show(void)
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_MEDIUM, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 15, 0);
+    lv_obj_add_flag(lbl_title, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(lbl_title, cb_secret_sniffer, LV_EVENT_LONG_PRESSED, NULL);
 
     lv_obj_t *lbl_sub = lv_label_create(header);
     lv_label_set_text(lbl_sub, "Menu Principal");
@@ -101,7 +102,7 @@ void ui_menu_show(void)
     lv_obj_set_style_text_color(lbl_sub, ZOTTI_GRAY, 0);
     lv_obj_align(lbl_sub, LV_ALIGN_RIGHT_MID, -15, 0);
 
-    // ── Grade de botões (flex row-wrap centrado) ──────────────
+    // Grade de botoes.
     lv_obj_t *grid = lv_obj_create(scr);
     lv_obj_set_size(grid, 800, 410);
     lv_obj_set_pos(grid, 0, 55);
@@ -122,9 +123,9 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_SETTINGS, "ECU",         cb_ecu);
     create_menu_btn(grid, LV_SYMBOL_LIST,     "CAN",         cb_can);
     create_menu_btn(grid, LV_SYMBOL_SAVE,     "Data Logger", cb_datalogger);
-    create_menu_btn(grid, LV_SYMBOL_EDIT,     "Configurações", cb_config);
+    create_menu_btn(grid, LV_SYMBOL_EDIT,     "Configuracoes", cb_config);
     create_menu_btn(grid, LV_SYMBOL_HOME,     "Sistema",     cb_sistema);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    ESP_LOGI(TAG, "Menu principal exibido — 7 botoes disponiveis");
+    ESP_LOGI(TAG, "Menu principal exibido - 7 botoes disponiveis");
 }

@@ -11,12 +11,12 @@ static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
 static void touch_diag_back_async(void *d) { LV_UNUSED(d); ui_screen_sistema_show(); }
 
-// Volta do touch diagnostic → limpa o callback antes de sair
+// Volta do touch diagnostic e limpa o callback antes de sair.
 static void touch_diag_back_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
     bsp_touch_register_cb(NULL);            // imediato: limpa callback de toque
-    lv_async_call(touch_diag_back_async, NULL); // adiado: troca de tela no próximo ciclo
+    lv_async_call(touch_diag_back_async, NULL); // adiado: troca de tela no proximo ciclo
 }
 
 static void touch_diag_show(void)
@@ -26,7 +26,7 @@ static void touch_diag_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Header com botão voltar
+    // Header com botao voltar.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -46,12 +46,12 @@ static void touch_diag_show(void)
     lv_obj_center(lbl_b);
 
     lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "DIAGNÓSTICO DE TOUCH");
+    lv_label_set_text(lbl_title, "DIAGNOSTICO DE TOUCH");
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // Conteúdo: container abaixo do header (800 × 440)
+    // Conteudo: container abaixo do header.
     lv_obj_t *content = lv_obj_create(scr);
     lv_obj_set_size(content, 800, 440);
     lv_obj_set_pos(content, 0, 40);
@@ -61,7 +61,7 @@ static void touch_diag_show(void)
     lv_obj_set_style_pad_all(content, 0, 0);
     lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Reutiliza a tela de touch já implementada como filho do content
+    // Reutiliza a tela de touch ja implementada como filho do content.
     ui_screen_touch_create(content);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
@@ -105,7 +105,7 @@ void ui_screen_sistema_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -130,7 +130,7 @@ void ui_screen_sistema_show(void)
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Área scrollável ───────────────────────────────────────
+    // Area scrollavel.
     lv_obj_t *scroll = lv_obj_create(scr);
     lv_obj_set_size(scroll, 800, 440);
     lv_obj_set_pos(scroll, 0, 40);
@@ -141,7 +141,7 @@ void ui_screen_sistema_show(void)
     lv_obj_set_layout(scroll, LV_LAYOUT_FLEX);
     lv_obj_set_style_flex_flow(scroll, LV_FLEX_FLOW_COLUMN, 0);
 
-    // ── Logo e versão ─────────────────────────────────────────
+    // Logo e versao.
     lv_obj_t *logo_card = lv_obj_create(scroll);
     lv_obj_set_size(logo_card, 740, 70);
     lv_obj_set_style_bg_color(logo_card, ZOTTI_BG_CARD, 0);
@@ -162,22 +162,22 @@ void ui_screen_sistema_show(void)
     lv_obj_set_style_text_color(lbl_fw_ver, ZOTTI_GRAY, 0);
     lv_obj_align(lbl_fw_ver, LV_ALIGN_RIGHT_MID, -10, 0);
 
-    // ── Informações do hardware ───────────────────────────────
+    // Informacoes do hardware.
     add_info_row(scroll, "Plataforma",    "ESP32-S3 Touch LCD 4.3\"");
-    add_info_row(scroll, "Display",       "800 × 480 px  |  RGB565");
+    add_info_row(scroll, "Display",       "800 x 480 px  |  RGB565");
     add_info_row(scroll, "Touch",         "GT911 Capacitivo (I2C)");
     add_info_row(scroll, "PSRAM",         "8 MB");
     add_info_row(scroll, "Flash",         "16 MB");
     add_info_row(scroll, "ESP-IDF",       esp_get_idf_version());
     add_info_row(scroll, "LVGL",          "v9.4.0");
 
-    // ── Diagnósticos ──────────────────────────────────────────
+    // Diagnosticos.
     lv_obj_t *lbl_sec = lv_label_create(scroll);
-    lv_label_set_text(lbl_sec, "  DIAGNÓSTICOS");
+    lv_label_set_text(lbl_sec, "  DIAGNOSTICOS");
     lv_obj_set_style_text_font(lbl_sec, ZOTTI_FONT_TINY, 0);
     lv_obj_set_style_text_color(lbl_sec, ZOTTI_ACCENT, 0);
 
-    // Botão diagnóstico de touch
+    // Botao diagnostico de touch.
     lv_obj_t *row_touch = lv_obj_create(scroll);
     lv_obj_set_size(row_touch, 740, 46);
     lv_obj_set_style_bg_color(row_touch, ZOTTI_BG_CARD, 0);
@@ -187,7 +187,7 @@ void ui_screen_sistema_show(void)
     lv_obj_clear_flag(row_touch, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_t = lv_label_create(row_touch);
-    lv_label_set_text(lbl_t, "Diagnóstico de Touch");
+    lv_label_set_text(lbl_t, "Diagnostico de Touch");
     lv_obj_set_style_text_font(lbl_t, ZOTTI_FONT_TINY, 0);
     lv_obj_set_style_text_color(lbl_t, ZOTTI_WHITE, 0);
     lv_obj_align(lbl_t, LV_ALIGN_LEFT_MID, 10, 0);

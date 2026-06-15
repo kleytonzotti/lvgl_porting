@@ -2,7 +2,7 @@
 #include "lvgl.h"
 
 // Para ativar fontes maiores:
-// idf.py menuconfig → Component config → LVGL → Font usage
+// idf.py menuconfig -> Component config -> LVGL -> Font usage
 // Habilitar: 16, 20, 28, 36, 48
 
 #if defined(CONFIG_LV_FONT_MONTSERRAT_48)

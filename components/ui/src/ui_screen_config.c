@@ -11,7 +11,7 @@ static void brightness_cb(lv_event_t *e)
 {
     lv_obj_t *slider = lv_event_get_target(e);
     int32_t val = lv_slider_get_value(slider);
-    // TODO: chamar bsp_backlight_set_level(val)
+    // TODO: chamar bsp_backlight_set_level(val).
     ESP_LOGI("CONFIG", "Brilho: %ld", (long)val);
 }
 
@@ -50,7 +50,7 @@ void ui_screen_config_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -70,12 +70,12 @@ void ui_screen_config_show(void)
     lv_obj_center(lbl_back);
 
     lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "CONFIGURAÇÕES");
+    lv_label_set_text(lbl_title, "CONFIGURACOES");
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Área scrollável de configurações ──────────────────────
+    // Area scrollavel de configuracoes.
     lv_obj_t *scroll = lv_obj_create(scr);
     lv_obj_set_size(scroll, 800, 440);
     lv_obj_set_pos(scroll, 0, 40);
@@ -86,7 +86,7 @@ void ui_screen_config_show(void)
     lv_obj_set_layout(scroll, LV_LAYOUT_FLEX);
     lv_obj_set_style_flex_flow(scroll, LV_FLEX_FLOW_COLUMN, 0);
 
-    // ── Seção: Display ────────────────────────────────────────
+    // Secao: Display.
     add_section_label(scroll, "  DISPLAY");
 
     // Brilho
@@ -111,8 +111,8 @@ void ui_screen_config_show(void)
     lv_obj_set_style_text_color(dd_tema, ZOTTI_WHITE, 0);
     lv_obj_set_style_text_font(dd_tema, ZOTTI_FONT_TINY, 0);
 
-    // ── Seção: Comunicação ────────────────────────────────────
-    add_section_label(scroll, "  COMUNICAÇÃO");
+    // Secao: Comunicacao.
+    add_section_label(scroll, "  COMUNICACAO");
 
     // BLE
     lv_obj_t *row_ble = add_row(scroll, LV_SYMBOL_BLUETOOTH "  Bluetooth (BLE)");
@@ -127,13 +127,13 @@ void ui_screen_config_show(void)
     lv_obj_align(sw_wifi, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_bg_color(sw_wifi, ZOTTI_ACCENT, LV_STATE_CHECKED);
 
-    // ── Seção: Sistema ────────────────────────────────────────
+    // Secao: Sistema.
     add_section_label(scroll, "  SISTEMA");
 
     // Idioma
     lv_obj_t *row_idioma = add_row(scroll, "Idioma");
     lv_obj_t *dd_idioma = lv_dropdown_create(row_idioma);
-    lv_dropdown_set_options(dd_idioma, "Português\nEnglish\nEspañol");
+    lv_dropdown_set_options(dd_idioma, "Portugues\nEnglish\nEspanol");
     lv_obj_set_size(dd_idioma, 200, 34);
     lv_obj_align(dd_idioma, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_bg_color(dd_idioma, ZOTTI_BG_HEADER, 0);
@@ -141,7 +141,7 @@ void ui_screen_config_show(void)
     lv_obj_set_style_text_font(dd_idioma, ZOTTI_FONT_TINY, 0);
 
     // OTA
-    lv_obj_t *row_ota = add_row(scroll, LV_SYMBOL_REFRESH "  Atualização OTA");
+    lv_obj_t *row_ota = add_row(scroll, LV_SYMBOL_REFRESH "  Atualizacao OTA");
     lv_obj_t *btn_ota = lv_btn_create(row_ota);
     lv_obj_set_size(btn_ota, 150, 34);
     lv_obj_align(btn_ota, LV_ALIGN_RIGHT_MID, -10, 0);

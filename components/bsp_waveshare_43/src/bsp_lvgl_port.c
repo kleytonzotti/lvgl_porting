@@ -2,29 +2,182 @@
 #include "esp_lvgl_port.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "driver/i2c.h"
 #include "driver/gpio.h"
+#include "freertos/task.h"
 
 static const char *TAG = "BSP_LVGL";
 
 static bsp_touch_cb_t s_touch_cb = NULL;
 
-// estado do touch — despachado fora do callback de leitura
-static lv_indev_t  *s_touch_indev   = NULL;
-static lv_coord_t   s_last_x        = 0;
-static lv_coord_t   s_last_y        = 0;
-static bool         s_last_pressed  = false;
-static bool         s_touch_dirty   = false;
+static lv_indev_t  *s_touch_indev  = NULL;
+static lv_coord_t   s_last_x       = 0;
+static lv_coord_t   s_last_y       = 0;
+static bool         s_last_pressed = false;
+static bool         s_touch_dirty  = false;
+
+// Diagnostic counters accessed by multiple tasks.
+static volatile uint32_t s_render_count      = 0;
+static volatile uint32_t s_flush_wait_ms     = 0;
+static volatile uint32_t s_flush_slow_count  = 0;
+static volatile uint32_t s_flush_tick_start  = 0;
+static volatile bool     s_flush_in_progress = false;
+static lv_obj_t         *s_fps_label         = NULL;
+static uint32_t          s_fps_last_render_count = 0;
 
 void bsp_touch_register_cb(bsp_touch_cb_t cb)
 {
     s_touch_cb = cb;
 }
 
-// ── Touch init — retorna o handle esp_lcd_touch ──────────
+// LVGL event callbacks.
+
+// Called after LVGL finishes rendering a frame.
+static void on_render_ready_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    s_render_count++;
+}
+
+// Called before flush waits for VSYNC.
+static void on_flush_wait_start_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    s_flush_in_progress = true;
+    s_flush_tick_start  = (uint32_t)lv_tick_get();
+}
+
+// Called after VSYNC arrives and flush completes.
+static void on_flush_wait_finish_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    uint32_t dt = (uint32_t)lv_tick_get() - s_flush_tick_start;
+    s_flush_wait_ms    = dt;
+    s_flush_in_progress = false;
+    if (dt > 60) {
+        s_flush_slow_count++;
+        ESP_LOGW(TAG, "[FLUSH] VSYNC slow: %lums (slow #%lu)",
+                 (unsigned long)dt, (unsigned long)s_flush_slow_count);
+    }
+}
+
+// Timer running inside the LVGL task.
+static void lvgl_diag_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    static uint32_t last = 0;
+    uint32_t now = s_render_count;
+    // sizeof(StackType_t) = 4 no ESP32-S3.
+    uint32_t stack_free = uxTaskGetStackHighWaterMark(NULL) * 4u;
+
+    ESP_LOGI(TAG, "[DIAG-LVGL-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
+             "vsync_ms=%-4lu | lento=%lu | heap=%u | psram=%u | stack_free=%uB",
+             (unsigned long)lv_tick_get(),
+             (unsigned long)now,
+             (unsigned long)(now - last),
+             (unsigned long)s_flush_wait_ms,
+             (unsigned long)s_flush_slow_count,
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)stack_free);
+    last = now;
+}
+
+static void fps_overlay_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (s_fps_label == NULL) {
+        return;
+    }
+
+    uint32_t now = s_render_count;
+    uint32_t fps = now - s_fps_last_render_count;
+    s_fps_last_render_count = now;
+
+    lv_label_set_text_fmt(s_fps_label, "FPS %lu/%d",
+                          (unsigned long)fps, BSP_LVGL_TARGET_FPS);
+    lv_obj_align(s_fps_label, LV_ALIGN_TOP_RIGHT, -6, 4);
+}
+
+static void create_fps_overlay(void)
+{
+    lv_obj_t *layer = lv_layer_top();
+
+    s_fps_label = lv_label_create(layer);
+    lv_label_set_text_fmt(s_fps_label, "FPS --/%d", BSP_LVGL_TARGET_FPS);
+    lv_obj_set_style_text_font(s_fps_label, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(s_fps_label, lv_color_hex(0xD8F7FF), 0);
+    lv_obj_set_style_bg_color(s_fps_label, lv_color_hex(0x061B35), 0);
+    lv_obj_set_style_bg_opa(s_fps_label, LV_OPA_80, 0);
+    lv_obj_set_style_border_color(s_fps_label, lv_color_hex(0x22D8FF), 0);
+    lv_obj_set_style_border_width(s_fps_label, 1, 0);
+    lv_obj_set_style_radius(s_fps_label, 4, 0);
+    lv_obj_set_style_pad_left(s_fps_label, 6, 0);
+    lv_obj_set_style_pad_right(s_fps_label, 6, 0);
+    lv_obj_set_style_pad_top(s_fps_label, 2, 0);
+    lv_obj_set_style_pad_bottom(s_fps_label, 2, 0);
+    lv_obj_clear_flag(s_fps_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(s_fps_label, LV_ALIGN_TOP_RIGHT, -6, 4);
+}
+
+static void apply_fps_limit(lv_display_t *disp)
+{
+    lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
+    if (refr_timer != NULL) {
+        lv_timer_set_period(refr_timer, BSP_LVGL_REFR_PERIOD_MS);
+    }
+
+    lv_timer_t *anim_timer = lv_anim_get_timer();
+    if (anim_timer != NULL) {
+        lv_timer_set_period(anim_timer, BSP_LVGL_REFR_PERIOD_MS);
+    }
+
+    ESP_LOGI(TAG, "FPS limitado a %d (%dms por frame)",
+             BSP_LVGL_TARGET_FPS, BSP_LVGL_REFR_PERIOD_MS);
+}
+
+// Independent monitor task.
+static void monitor_task(void *arg)
+{
+    LV_UNUSED(arg);
+    uint32_t last = 0;
+
+    // Wait for startup before monitoring.
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+
+        uint32_t now   = s_render_count;
+        uint32_t delta = now - last;
+        bool     stuck = s_flush_in_progress;
+
+        ESP_LOGI(TAG, "[MON-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
+                 "flush_travado=%s | heap=%u | psram=%u",
+                 (unsigned long)lv_tick_get(),
+                 (unsigned long)now,
+                 (unsigned long)delta,
+                 stuck ? "SIM !!!" : "nao",
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+        if (delta == 0 && lv_tick_get() > 5000) {
+            ESP_LOGE(TAG, "[MON-TASK] No render in 3s; LVGL task may be blocked");
+        }
+        if (stuck) {
+            uint32_t wait = (uint32_t)lv_tick_get() - s_flush_tick_start;
+            ESP_LOGE(TAG, "[MON-TASK] Flush wait active for %lums",
+                     (unsigned long)wait);
+        }
+
+        last = now;
+    }
+}
+
+// Touch init.
 static esp_lcd_touch_handle_t bsp_touch_init(void)
 {
-    // GPIO4 como saída — reset do GT911 via CH422G
     gpio_config_t io_cfg = {
         .pin_bit_mask = (1ULL << GPIO_NUM_4),
         .mode         = GPIO_MODE_OUTPUT,
@@ -34,25 +187,15 @@ static esp_lcd_touch_handle_t bsp_touch_init(void)
     };
     gpio_config(&io_cfg);
 
-    // Sequência de reset do GT911 via CH422G
-    // NOTA: comando 0x01→0x24 (config CH422G) omitido —
-    // bsp_backlight_set() já o executa antes desta função.
-    uint8_t buf;
-
-    buf = 0x2C;
-    i2c_master_write_to_device(BSP_I2C_NUM, 0x38, &buf, 1,
-        pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS));
+    ESP_ERROR_CHECK(bsp_touch_reset_set(false));
     esp_rom_delay_us(100 * 1000);
 
     gpio_set_level(GPIO_NUM_4, 0);
     esp_rom_delay_us(100 * 1000);
 
-    buf = 0x2E;
-    i2c_master_write_to_device(BSP_I2C_NUM, 0x38, &buf, 1,
-        pdMS_TO_TICKS(BSP_I2C_TIMEOUT_MS));
+    ESP_ERROR_CHECK(bsp_touch_reset_set(true));
     esp_rom_delay_us(200 * 1000);
 
-    // IO I2C para o GT911 — sem scl_speed_hz (driver legado)
     esp_lcd_panel_io_handle_t tp_io = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = {
         .dev_addr            = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,
@@ -85,54 +228,53 @@ static esp_lcd_touch_handle_t bsp_touch_init(void)
     return tp;
 }
 
-// ── Init principal ────────────────────────────────────────
+// ── Init principal ────────────────────────────────────────────
 esp_err_t bsp_lvgl_init(void)
 {
-    // 1) Inicializa o port LVGL — cria task interna, mutex, etc.
+    ESP_LOGI(TAG, "Memoria antes do LVGL: heap=%u psram=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    // 1) Inicializa o port LVGL.
     const lvgl_port_cfg_t lvgl_cfg = {
-        .task_priority   = BSP_LVGL_TASK_PRIORITY,
-        .task_stack      = BSP_LVGL_TASK_STACK_KB * 1024,
-        .task_affinity   = BSP_LVGL_TASK_CORE,
+        .task_priority     = BSP_LVGL_TASK_PRIORITY,
+        .task_stack        = BSP_LVGL_TASK_STACK_KB * 1024,
+        .task_affinity     = BSP_LVGL_TASK_CORE,
         .task_max_sleep_ms = BSP_LVGL_TASK_MAX_DELAY_MS,
-        .timer_period_ms = BSP_LVGL_TICK_MS,
+        .timer_period_ms   = BSP_LVGL_TICK_MS,
     };
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
-    ESP_LOGI(TAG, "lvgl_port_init OK");
+    ESP_LOGI(TAG, "lvgl_port_init OK | task_stack=%dKB core=%d prio=%d",
+             BSP_LVGL_TASK_STACK_KB, BSP_LVGL_TASK_CORE, BSP_LVGL_TASK_PRIORITY);
 
-    // 2) Registra o display RGB
+    // 2) Registra o display RGB.
     esp_lcd_panel_handle_t panel = bsp_lcd_get_panel_handle();
-    ESP_LOGI(TAG, "Panel handle = %p", panel);
 
     const lvgl_port_display_cfg_t disp_cfg = {
-        .panel_handle     = panel,
-        // Com avoid_tearing=true, o port ignora buffer_size e usa os
-        // framebuffers PSRAM do driver RGB diretamente (800x480x2 cada).
-        // O valor abaixo é sobrescrito internamente pelo port.
-        .buffer_size      = BSP_LCD_H_RES * BSP_LCD_V_RES,
-        .double_buffer    = false,
-        .hres             = BSP_LCD_H_RES,
-        .vres             = BSP_LCD_V_RES,
-        .monochrome       = false,
-        .color_format     = LV_COLOR_FORMAT_RGB565,
-        .rotation = {
-            .swap_xy  = false,
-            .mirror_x = false,
-            .mirror_y = false,
-        },
+        .panel_handle  = panel,
+        // Com avoid_tearing, o port usa os framebuffers RGB em PSRAM como
+        // draw buffers. Isso evita alternancia de buffers com areas parciais
+        // dessincronizadas ao pressionar/soltar objetos.
+        .buffer_size   = BSP_LCD_H_RES * BSP_LCD_V_RES,
+        .double_buffer = false,
+        .hres          = BSP_LCD_H_RES,
+        .vres          = BSP_LCD_V_RES,
+        .monochrome    = false,
+        .color_format  = LV_COLOR_FORMAT_RGB565,
+        .rotation      = { .swap_xy=false, .mirror_x=false, .mirror_y=false },
         .flags = {
             .buff_dma    = false,
             .buff_spiram = false,
             .swap_bytes  = false,
-            // OBRIGATÓRIO com avoid_tearing=true: habilita a espera por
-            // VSYNC no flush callback (sem isso os framebuffers nunca trocam)
-            .full_refresh = true,
+            .full_refresh = false,
+            .direct_mode  = true,
         },
     };
 
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode       = false,   // VSYNC callback (1x/frame), não bounce (1x/chunk)
-            .avoid_tearing = true,    // duplo framebuffer PSRAM: ISR lê de A, LVGL escreve em B
+            .bb_mode       = false,
+            .avoid_tearing = true,
         },
     };
 
@@ -141,22 +283,36 @@ esp_err_t bsp_lvgl_init(void)
         ESP_LOGE(TAG, "Falha ao registrar display");
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Display registrado: %p, hor_res=%d ver_res=%d",
-             disp, (int)lv_display_get_horizontal_resolution(disp),
-             (int)lv_display_get_vertical_resolution(disp));
+    ESP_LOGI(TAG, "Display registrado %p (%dx%d) | direct=true avoid_tearing=true fps=%d",
+             disp,
+             (int)lv_display_get_horizontal_resolution(disp),
+             (int)lv_display_get_vertical_resolution(disp),
+             BSP_LVGL_TARGET_FPS);
 
-    // DEBUG: 1fps para diagnosticar corrupção visual (bandwidth PSRAM)
-    lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
-    if (refr_timer) {
-        lv_timer_set_period(refr_timer, 1000);  // 1000ms = 1fps
+    // Registra callbacks de diagnostico dentro do mutex LVGL.
+    if (bsp_lvgl_lock(-1)) {
+        apply_fps_limit(disp);
+        create_fps_overlay();
+        lv_display_add_event_cb(disp, on_render_ready_cb,
+                                LV_EVENT_RENDER_READY,      NULL);
+        lv_display_add_event_cb(disp, on_flush_wait_start_cb,
+                                LV_EVENT_FLUSH_WAIT_START,  NULL);
+        lv_display_add_event_cb(disp, on_flush_wait_finish_cb,
+                                LV_EVENT_FLUSH_WAIT_FINISH, NULL);
+        lv_timer_create(fps_overlay_timer_cb, 1000, NULL);
+        lv_timer_create(lvgl_diag_timer_cb, 3000, NULL);
+        bsp_lvgl_unlock();
     }
 
-    // 3) Inicializa e registra o touch
+    // Task de monitoramento independente (core 0, prio baixa).
+    xTaskCreatePinnedToCore(monitor_task, "lvgl_mon", 3072, NULL, 1, NULL, 0);
+
+    // 3) Inicializa e registra o touch.
     esp_lcd_touch_handle_t tp = bsp_touch_init();
 
     const lvgl_port_touch_cfg_t touch_cfg = {
-        .disp      = disp,
-        .handle    = tp,
+        .disp   = disp,
+        .handle = tp,
     };
     s_touch_indev = lvgl_port_add_touch(&touch_cfg);
     if (s_touch_indev == NULL) {
@@ -164,12 +320,19 @@ esp_err_t bsp_lvgl_init(void)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "LVGL inicializado (LVGL %d.%d.%d)",
-             LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+    // GT911: ao segurar pressionado, a area de contato expande e o centroide
+    // deriva ate ~20px. O LVGL default (10px) interpreta isso como scroll e
+    // abandona o botao pressionado. Aumentar para 25px elimina falsos scrolls.
+    lv_indev_set_scroll_limit(s_touch_indev, 25);
+
+    ESP_LOGI(TAG, "LVGL %d.%d.%d pronto | heap=%u psram=%u",
+             LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH,
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     return ESP_OK;
 }
 
-// ── Handler — despacha callback de touch para a UI ───────
+// Handler: despacha callback de touch para a UI.
 void bsp_lvgl_handler(void)
 {
     if (s_touch_indev && s_touch_cb) {
@@ -196,16 +359,20 @@ void bsp_lvgl_handler(void)
                 s_touch_dirty = false;
             }
             bsp_lvgl_unlock();
+        } else {
+            static uint32_t s_lock_timeouts = 0;
+            s_lock_timeouts++;
+            // Log a cada 5 timeouts para nao spammar.
+            if (s_lock_timeouts <= 3 || s_lock_timeouts % 25 == 0) {
+                ESP_LOGW(TAG, "[LOCK] Timeout #%lu (50ms) - task LVGL segurando mutex!",
+                         (unsigned long)s_lock_timeouts);
+            }
         }
     }
-    // CONFIG_FREERTOS_HZ=100 → 1 tick = 10ms.
-    // vTaskDelay(0) não bloqueia de verdade e priva a IDLE0 de CPU,
-    // disparando o Task WDT. Usar pelo menos 2 ticks (20ms) garante
-    // que a IDLE rode e alimente o watchdog.
     vTaskDelay(2);
 }
 
-// ── Lock / Unlock — delega para esp_lvgl_port ────────────
+// Lock / Unlock.
 bool bsp_lvgl_lock(int timeout_ms)
 {
     return lvgl_port_lock(timeout_ms);

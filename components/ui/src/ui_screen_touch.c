@@ -10,7 +10,7 @@ static lv_obj_t *s_label_status = NULL;
 static lv_obj_t *s_touch_point = NULL;
 
 
-// ── Área de desenho do ponto ──────────────────────────────
+// Area de desenho do ponto.
 static void draw_touch_point(lv_coord_t x, lv_coord_t y)
 {
     if (!s_touch_point) {
@@ -25,12 +25,12 @@ static void draw_touch_point(lv_coord_t x, lv_coord_t y)
     lv_obj_clear_flag(s_touch_point, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ── Callback chamado pela task de touch ──────────────────
+// Callback chamado pela task de touch.
 void ui_screen_touch_update(lv_coord_t x, lv_coord_t y, bool pressed)
 {
     if (!s_label_coords || !s_label_status || !s_canvas) return;
 
-    // Log para diagnóstico — mostra coordenada raw e dimensão do canvas
+    // Log para diagnostico: mostra coordenada raw e dimensao do canvas.
     lv_coord_t cx = lv_obj_get_x(s_canvas);
     lv_coord_t cy = lv_obj_get_y(s_canvas);
     lv_coord_t cw = lv_obj_get_width(s_canvas);
@@ -55,12 +55,12 @@ void ui_screen_touch_update(lv_coord_t x, lv_coord_t y, bool pressed)
     }
 }
 
-// ── Criação da tela ───────────────────────────────────────
+// Criacao da tela.
 void ui_screen_touch_create(lv_obj_t *parent)
 {
-    // Título
+    // Titulo.
     lv_obj_t *title = lv_label_create(parent);
-    lv_label_set_text(title, "Diagnóstico de Touch");
+    lv_label_set_text(title, "Diagnostico de Touch");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 10, 8);
 
@@ -77,7 +77,7 @@ void ui_screen_touch_create(lv_obj_t *parent)
         lv_palette_main(LV_PALETTE_GREY), 0);
     lv_obj_align(s_label_status, LV_ALIGN_TOP_LEFT, 10, 60);
 
-    // Área de toque — canvas onde o ponto aparece
+    // Area de toque: canvas onde o ponto aparece.
     s_canvas = lv_obj_create(parent);
     lv_obj_set_size(s_canvas, 780, 340);
     lv_obj_align(s_canvas, LV_ALIGN_BOTTOM_MID, 0, -5);
@@ -87,7 +87,7 @@ void ui_screen_touch_create(lv_obj_t *parent)
     lv_obj_set_style_border_width(s_canvas, 1, 0);
     lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Instruções no centro do canvas
+    // Instrucoes no centro do canvas.
     lv_obj_t *hint = lv_label_create(s_canvas);
     lv_label_set_text(hint, "Toque na tela para ver o ponto");
     lv_obj_set_style_text_color(hint, lv_palette_main(LV_PALETTE_BLUE_GREY), 0);

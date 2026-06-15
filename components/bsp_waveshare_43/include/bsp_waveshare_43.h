@@ -2,6 +2,7 @@
 #define BSP_WAVESHARE_43_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 #include "driver/gpio.h"
 
@@ -13,14 +14,14 @@
 extern "C" {
 #endif
 
-// ── Resolução ──────────────────────────────────────────────
+// Display resolution
 #define BSP_LCD_H_RES               (800)
 #define BSP_LCD_V_RES               (480)
 
-// ── Clock do painel RGB ────────────────────────────────────
+// RGB panel clock
 #define BSP_LCD_PIXEL_CLOCK_HZ      (16 * 1000 * 1000)
 
-// ── Pinos RGB ─────────────────────────────────────────────
+// RGB pins
 #define BSP_LCD_IO_VSYNC            (GPIO_NUM_3)
 #define BSP_LCD_IO_HSYNC            (GPIO_NUM_46)
 #define BSP_LCD_IO_DE               (GPIO_NUM_5)
@@ -42,25 +43,42 @@ extern "C" {
 #define BSP_LCD_IO_DATA14           (GPIO_NUM_41)
 #define BSP_LCD_IO_DATA15           (GPIO_NUM_40)
 
-// ── I2C (backlight/touch via CH422G) ─────────────────────
+// I2C (backlight/touch/TF/CAN select via CH422G)
 #define BSP_I2C_NUM                 (0)
 #define BSP_I2C_SDA                 (GPIO_NUM_8)
 #define BSP_I2C_SCL                 (GPIO_NUM_9)
 #define BSP_I2C_FREQ_HZ             (400000)
 #define BSP_I2C_TIMEOUT_MS          (1000)
 
-// ── LCD bounce buffer (linhas por transferência DMA) ─────
-#define BSP_LCD_BOUNCE_LINES        (10)
+// Board peripheral pins
+#define BSP_CAN_TX                  (GPIO_NUM_15)
+#define BSP_CAN_RX                  (GPIO_NUM_16)
+#define BSP_SD_MOSI                 (GPIO_NUM_11)
+#define BSP_SD_SCLK                 (GPIO_NUM_12)
+#define BSP_SD_MISO                 (GPIO_NUM_13)
+
+// CH422G output bits
+#define BSP_CH422_TP_RST_BIT        (1U << 1)
+#define BSP_CH422_LCD_BL_BIT        (1U << 2)
+#define BSP_CH422_SD_CS_BIT         (1U << 4)  // active low
+#define BSP_CH422_CAN_SEL_BIT       (1U << 5)  // high selects CAN
+
+// LCD bounce buffer
+// Disabled in direct/avoid_tearing mode: VSYNC must mean end-of-frame, not
+// end-of-bounce chunk.
+#define BSP_LCD_BOUNCE_LINES        (0)
 #define BSP_LCD_BOUNCE_BUFFER_PX    (BSP_LCD_H_RES * BSP_LCD_BOUNCE_LINES)
 
-// ── LVGL task ─────────────────────────────────────────────
-#define BSP_LVGL_TICK_MS            (2)
-#define BSP_LVGL_TASK_STACK_KB      (8)
-#define BSP_LVGL_TASK_PRIORITY      (2)
+// LVGL task
+#define BSP_LVGL_TARGET_FPS         (10)
+#define BSP_LVGL_REFR_PERIOD_MS     (1000 / BSP_LVGL_TARGET_FPS)
+#define BSP_LVGL_TICK_MS            (10)
+#define BSP_LVGL_TASK_STACK_KB      (12)
+#define BSP_LVGL_TASK_PRIORITY      (5)
 #define BSP_LVGL_TASK_CORE          (1)
-#define BSP_LVGL_TASK_MAX_DELAY_MS  (10)
+#define BSP_LVGL_TASK_MAX_DELAY_MS  (BSP_LVGL_REFR_PERIOD_MS)
 #define BSP_LVGL_TASK_MIN_DELAY_MS  (1)
-#define BSP_LVGL_BUFFER_LINES       (50)
+#define BSP_LVGL_BUFFER_LINES       (80)
 
 esp_lcd_panel_handle_t bsp_lcd_get_panel_handle(void);
 
@@ -68,6 +86,10 @@ esp_err_t bsp_waveshare_43_init(void);
 
 esp_err_t bsp_i2c_init(void);
 esp_err_t bsp_backlight_set(bool enable);
+esp_err_t bsp_ch422_update(uint8_t mask, uint8_t value);
+esp_err_t bsp_sdcard_select(bool selected);
+esp_err_t bsp_can_set_selected(bool selected);
+esp_err_t bsp_touch_reset_set(bool high);
 esp_err_t bsp_lcd_rgb_init(void);
 esp_err_t bsp_lvgl_init(void);
 

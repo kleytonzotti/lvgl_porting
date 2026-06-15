@@ -7,7 +7,7 @@ static const char *TAG = "UI_ECU";
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
-// Sensores recebidos via BLE da ECU externa
+// Sensores recebidos via BLE da ECU externa.
 typedef struct {
     const char *name;
     const char *unit;
@@ -19,10 +19,10 @@ static const ecu_sensor_t k_sensors[] = {
     { "MAP",      "kPa",  {0} },
     { "TPS",      "%",    {0} },
     { "AFR",      "",     {0} },
-    { "Lambda",   "λ",   {0} },
-    { "ECT",      "°C",  {0} },
-    { "IAT",      "°C",  {0} },
-    { "Pressão",  "kPa",  {0} },
+    { "Lambda",   "",     {0} },
+    { "ECT",      "C",    {0} },
+    { "IAT",      "C",    {0} },
+    { "Pressao",  "kPa",  {0} },
     { "Bateria",  "V",    {0} },
     { "Estado",   "",     {0} },
 };
@@ -34,7 +34,7 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -59,7 +59,7 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Status conexão BLE ────────────────────────────────────
+    // Status conexao BLE.
     lv_obj_t *status_bar = lv_obj_create(scr);
     lv_obj_set_size(status_bar, 800, 36);
     lv_obj_set_pos(status_bar, 0, 40);
@@ -79,7 +79,7 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_text_color(lbl_proto, ZOTTI_GRAY, 0);
     lv_obj_align(lbl_proto, LV_ALIGN_RIGHT_MID, -15, 0);
 
-    // ── Grade de sensores (2 colunas × 5 linhas) ──────────────
+    // Grade de sensores.
     lv_obj_t *grid = lv_obj_create(scr);
     lv_obj_set_size(grid, 800, 400);
     lv_obj_set_pos(grid, 0, 80);

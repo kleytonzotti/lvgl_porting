@@ -50,7 +50,7 @@ void ui_screen_datalogger_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ── Header ───────────────────────────────────────────────
+    // Header.
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, 800, 40);
     lv_obj_set_pos(header, 0, 0);
@@ -75,7 +75,7 @@ void ui_screen_datalogger_show(void)
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    // ── Barra de controles ────────────────────────────────────
+    // Barra de controles.
     lv_obj_t *ctrl = lv_obj_create(scr);
     lv_obj_set_size(ctrl, 800, 56);
     lv_obj_set_pos(ctrl, 0, 40);
@@ -83,7 +83,7 @@ void ui_screen_datalogger_show(void)
     lv_obj_set_style_border_width(ctrl, 0, 0);
     lv_obj_clear_flag(ctrl, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Botão iniciar/parar
+    // Botao iniciar/parar.
     s_btn_log = lv_btn_create(ctrl);
     lv_obj_set_size(s_btn_log, 150, 36);
     lv_obj_align(s_btn_log, LV_ALIGN_LEFT_MID, 10, 0);
@@ -95,7 +95,7 @@ void ui_screen_datalogger_show(void)
     lv_obj_set_style_text_font(lbl_log, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_log);
 
-    // Botão limpar
+    // Botao limpar.
     lv_obj_t *btn_clear = lv_btn_create(ctrl);
     lv_obj_set_size(btn_clear, 120, 36);
     lv_obj_align(btn_clear, LV_ALIGN_LEFT_MID, 175, 0);
@@ -116,12 +116,12 @@ void ui_screen_datalogger_show(void)
 
     // Canais
     lv_obj_t *lbl_ch = lv_label_create(ctrl);
-    lv_label_set_text(lbl_ch, "Canais: RPM | TPS | MAP | AFR | λ | Vel | ECT | IAT");
+    lv_label_set_text(lbl_ch, "Canais: RPM | TPS | MAP | AFR | Lambda | Vel | ECT | IAT");
     lv_obj_set_style_text_font(lbl_ch, ZOTTI_FONT_TINY, 0);
     lv_obj_set_style_text_color(lbl_ch, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_ch, LV_ALIGN_BOTTOM_LEFT, 10, -5);
 
-    // ── Cabeçalho da lista ────────────────────────────────────
+    // Cabecalho da lista.
     lv_obj_t *list_hdr = lv_obj_create(scr);
     lv_obj_set_size(list_hdr, 800, 28);
     lv_obj_set_pos(list_hdr, 0, 96);
@@ -139,7 +139,7 @@ void ui_screen_datalogger_show(void)
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, hdr_x[i], 0);
     }
 
-    // ── Lista scrollável de entradas ──────────────────────────
+    // Lista scrollavel de entradas.
     s_list = lv_obj_create(scr);
     lv_obj_set_size(s_list, 800, 356);
     lv_obj_set_pos(s_list, 0, 124);
