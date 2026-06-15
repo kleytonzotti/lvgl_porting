@@ -15,6 +15,7 @@ static const char *TAG = "UI_SD";
 // ─────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────
+static lv_obj_t *s_scr        = NULL;
 static lv_obj_t *s_list       = NULL;
 static lv_obj_t *s_lbl_status = NULL;
 static lv_obj_t *s_lbl_path   = NULL;
@@ -53,21 +54,102 @@ static void go_up(void)
 }
 
 // ─────────────────────────────────────────────────────
-// Async reload (called from enter/delete/back event
-// callbacks so that LVGL finishes event dispatch before
-// we delete children of the list)
+// Async helpers
 // ─────────────────────────────────────────────────────
 
-static void reload_async(void *arg)
+static void reload_async(void *arg)   { LV_UNUSED(arg); reload_current_dir(); }
+static void go_up_async(void *arg)    { LV_UNUSED(arg); go_up(); }
+
+// ─────────────────────────────────────────────────────
+// Format modal
+// ─────────────────────────────────────────────────────
+
+static void format_confirm_cb(lv_event_t *e)
 {
-    LV_UNUSED(arg);
-    reload_current_dir();
+    // Close the modal (parent overlay)
+    lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
+    if (overlay) lv_obj_delete(overlay);
+
+    if (s_lbl_status) lv_label_set_text(s_lbl_status, "Formatando...");
+
+    esp_err_t err = app_can_sd_format();
+
+    if (s_lbl_status) {
+        lv_label_set_text(s_lbl_status, err == ESP_OK ? "Formatado!" : "Erro ao formatar!");
+    }
+
+    // Return to root and reload
+    strncpy(s_current_path, SD_ROOT, sizeof(s_current_path) - 1);
+    s_current_path[sizeof(s_current_path) - 1] = '\0';
+    lv_async_call(reload_async, NULL);
 }
 
-static void go_up_async(void *arg)
+static void format_cancel_cb(lv_event_t *e)
 {
-    LV_UNUSED(arg);
-    go_up();
+    lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
+    if (overlay) lv_obj_delete(overlay);
+}
+
+static void format_btn_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (!s_scr) return;
+
+    // Semi-transparent full-screen overlay
+    lv_obj_t *overlay = lv_obj_create(s_scr);
+    lv_obj_set_size(overlay, 800, 480);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Dialog box
+    lv_obj_t *dlg = lv_obj_create(overlay);
+    lv_obj_set_size(dlg, 420, 200);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(0x0D1F33), 0);
+    lv_obj_set_style_border_color(dlg, ZOTTI_RED, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_radius(dlg, 8, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_title = lv_label_create(dlg);
+    lv_label_set_text(lbl_title, LV_SYMBOL_WARNING "  FORMATAR SD?");
+    lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(lbl_title, ZOTTI_RED, 0);
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 16);
+
+    lv_obj_t *lbl_msg = lv_label_create(dlg);
+    lv_label_set_text(lbl_msg, "Todos os arquivos serao apagados.\nEsta acao nao pode ser desfeita.");
+    lv_obj_set_style_text_font(lbl_msg, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(lbl_msg, ZOTTI_GRAY, 0);
+    lv_obj_set_style_text_align(lbl_msg, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_msg, LV_ALIGN_CENTER, 0, 10);
+
+    // Cancel button
+    lv_obj_t *btn_cancel = lv_btn_create(dlg);
+    lv_obj_set_size(btn_cancel, 140, 36);
+    lv_obj_align(btn_cancel, LV_ALIGN_BOTTOM_LEFT, 20, -14);
+    lv_obj_set_style_bg_color(btn_cancel, ZOTTI_BG_HEADER, 0);
+    lv_obj_set_style_radius(btn_cancel, 4, 0);
+    lv_obj_add_event_cb(btn_cancel, format_cancel_cb, LV_EVENT_CLICKED, overlay);
+    lv_obj_t *lbl_c = lv_label_create(btn_cancel);
+    lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE "  Cancelar");
+    lv_obj_set_style_text_font(lbl_c, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_c);
+
+    // Confirm button
+    lv_obj_t *btn_ok = lv_btn_create(dlg);
+    lv_obj_set_size(btn_ok, 140, 36);
+    lv_obj_align(btn_ok, LV_ALIGN_BOTTOM_RIGHT, -20, -14);
+    lv_obj_set_style_bg_color(btn_ok, lv_color_hex(0x7A0000), 0);
+    lv_obj_set_style_radius(btn_ok, 4, 0);
+    lv_obj_add_event_cb(btn_ok, format_confirm_cb, LV_EVENT_CLICKED, overlay);
+    lv_obj_t *lbl_ok = lv_label_create(btn_ok);
+    lv_label_set_text(lbl_ok, LV_SYMBOL_WARNING "  Formatar");
+    lv_obj_set_style_text_font(lbl_ok, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_ok);
 }
 
 // ─────────────────────────────────────────────────────
@@ -77,7 +159,7 @@ static void go_up_async(void *arg)
 static void screen_delete_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    s_list = s_lbl_status = s_lbl_path = s_lbl_back = NULL;
+    s_scr = s_list = s_lbl_status = s_lbl_path = s_lbl_back = NULL;
     s_entry_count = 0;
 }
 
@@ -125,15 +207,12 @@ static void delete_cb(lv_event_t *e)
 
 static void update_header_labels(void)
 {
-    // Path breadcrumb: show the part after /sdcard
     if (s_lbl_path) {
         const char *rel = s_current_path + strlen(SD_ROOT);
         lv_label_set_text_fmt(s_lbl_path, "SD:%s%s",
                               at_root() ? "" : rel,
                               at_root() ? "/" : "");
     }
-
-    // Back button label
     if (s_lbl_back) {
         lv_label_set_text(s_lbl_back,
                           at_root() ? LV_SYMBOL_LEFT " Voltar"
@@ -167,7 +246,6 @@ static void build_list(void)
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-        // Icon + name
         lv_obj_t *lbl_name = lv_label_create(row);
         lv_label_set_text_fmt(lbl_name,
             is_dir ? LV_SYMBOL_DIRECTORY "  %s" : LV_SYMBOL_FILE "  %s",
@@ -178,7 +256,6 @@ static void build_list(void)
         lv_obj_align(lbl_name, LV_ALIGN_LEFT_MID, 12, 0);
 
         if (is_dir) {
-            // Entire row is clickable
             lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_add_event_cb(row, enter_dir_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
@@ -188,7 +265,6 @@ static void build_list(void)
             lv_obj_set_style_text_color(lbl_arr, ZOTTI_GRAY, 0);
             lv_obj_align(lbl_arr, LV_ALIGN_RIGHT_MID, -12, 0);
         } else {
-            // File size
             lv_obj_t *lbl_size = lv_label_create(row);
             if (s_entries[i].size_kb == 0) {
                 lv_label_set_text(lbl_size, "< 1 KB");
@@ -200,7 +276,6 @@ static void build_list(void)
             lv_obj_set_style_text_color(lbl_size, ZOTTI_GRAY, 0);
             lv_obj_align(lbl_size, LV_ALIGN_RIGHT_MID, -110, 0);
 
-            // Delete button
             lv_obj_t *btn_del = lv_btn_create(row);
             lv_obj_set_size(btn_del, 90, 30);
             lv_obj_align(btn_del, LV_ALIGN_RIGHT_MID, -8, 0);
@@ -246,6 +321,7 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
     s_entry_count = 0;
 
     lv_obj_t *scr = lv_obj_create(NULL);
+    s_scr = scr;
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -259,6 +335,7 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
     lv_obj_set_style_border_width(hdr, 0, 0);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Back / Up button
     lv_obj_t *btn_back = lv_btn_create(hdr);
     lv_obj_set_size(btn_back, 110, 28);
     lv_obj_align(btn_back, LV_ALIGN_LEFT_MID, 5, 0);
@@ -270,11 +347,24 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
     lv_obj_set_style_text_font(s_lbl_back, ZOTTI_FONT_TINY, 0);
     lv_obj_center(s_lbl_back);
 
+    // Title
     lv_obj_t *lbl_title = lv_label_create(hdr);
     lv_label_set_text(lbl_title, LV_SYMBOL_DIRECTORY "  ARQUIVOS SD");
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(lbl_title, LV_ALIGN_CENTER, -50, 0);
+
+    // Format button (right side)
+    lv_obj_t *btn_fmt = lv_btn_create(hdr);
+    lv_obj_set_size(btn_fmt, 130, 28);
+    lv_obj_align(btn_fmt, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_bg_color(btn_fmt, lv_color_hex(0x5A0A0A), 0);
+    lv_obj_set_style_radius(btn_fmt, 4, 0);
+    lv_obj_add_event_cb(btn_fmt, format_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_fmt = lv_label_create(btn_fmt);
+    lv_label_set_text(lbl_fmt, LV_SYMBOL_WARNING " Formatar SD");
+    lv_obj_set_style_text_font(lbl_fmt, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_fmt);
 
     // ── Status bar (path + count) ─────────────────────
     lv_obj_t *status_bar = lv_obj_create(scr);

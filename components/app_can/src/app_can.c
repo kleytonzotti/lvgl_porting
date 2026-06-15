@@ -484,3 +484,17 @@ bool app_can_sd_delete_file(const char *path)
     if (!path) return false;
     return (remove(path) == 0);
 }
+
+esp_err_t app_can_sd_format(void)
+{
+    if (!s_sd_mounted || !s_sd_card) return ESP_ERR_INVALID_STATE;
+
+    // Close any open log file before formatting
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    close_log_file_locked();
+    xSemaphoreGive(s_lock);
+
+    esp_err_t err = esp_vfs_fat_sdcard_format(APP_CAN_SD_MOUNT, s_sd_card);
+    ESP_LOGI(TAG, "SD format: %s", esp_err_to_name(err));
+    return err;
+}

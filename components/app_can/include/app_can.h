@@ -79,6 +79,7 @@ bool      app_can_sd_is_mounted(void);
 int       app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
 int       app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_entries);
 bool      app_can_sd_delete_file(const char *path);
+esp_err_t app_can_sd_format(void);
 
 #ifdef __cplusplus
 }
