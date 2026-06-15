@@ -10,7 +10,8 @@
 extern "C" {
 #endif
 
-#define APP_CAN_SNIFF_LINE_MAX 96
+#define APP_CAN_MAX_IDS        128   // max unique IDs tracked
+#define APP_CAN_CSV_LINE_MAX    96   // max bytes per CSV line
 
 typedef enum {
     APP_CAN_STATE_STOPPED = 0,
@@ -18,23 +19,57 @@ typedef enum {
     APP_CAN_STATE_ERROR,
 } app_can_state_t;
 
+// Latest data + statistics for one unique CAN ID.
+typedef struct {
+    uint32_t id;
+    bool     extd;
+    uint8_t  dlc;
+    uint8_t  data[8];
+    uint32_t count;      // total frames received for this ID
+    uint32_t last_ms;    // tick ms of last frame (for Hz)
+    uint16_t hz_x10;     // frequency * 10  (e.g. 105 = 10.5 Hz)
+} app_can_id_entry_t;
+
+// SD file entry for browser.
+typedef struct {
+    char     name[40];   // filename only (e.g. "can_001.csv")
+    uint32_t size_kb;
+} app_can_sd_file_t;
+
 typedef struct {
     app_can_state_t state;
-    bool driver_ready;
-    bool sd_mounted;
-    bool log_open;
+    bool     driver_ready;
+    bool     sd_mounted;
+    bool     log_open;
     uint32_t frames;
-    uint32_t dropped_lines;
     uint32_t rx_errors;
-    char last_error[64];
+    uint32_t unique_ids;
+    char     last_error[64];
+    char     log_path[40];   // current session file (e.g. "/sdcard/can_001.csv")
 } app_can_status_t;
 
-esp_err_t app_can_init(void);
-esp_err_t app_can_sniffer_start(void);
-void app_can_sniffer_stop(void);
-bool app_can_sniffer_poll_line(char *out, size_t out_size);
-void app_can_sniffer_get_status(app_can_status_t *out_status);
+// --- Core lifecycle ---
+esp_err_t  app_can_init(void);
+esp_err_t  app_can_sniffer_start(void);
+void       app_can_sniffer_stop(void);
+
+// --- Per-ID monitor (snapshot copy — safe to call from any task) ---
+uint32_t app_can_get_id_table(app_can_id_entry_t *out, uint32_t max_entries);
+void     app_can_clear_id_table(void);
+
+// --- Software filter: only record frames where id_min <= id <= id_max ---
+// Default: 0, 0x1FFFFFFF (accept all).
+void app_can_set_filter(uint32_t id_min, uint32_t id_max);
+void app_can_get_filter(uint32_t *id_min_out, uint32_t *id_max_out);
+
+// --- Status ---
+void        app_can_sniffer_get_status(app_can_status_t *out);
 const char *app_can_sniffer_log_path(void);
+
+// --- SD file browser (usable after sniffer_start which mounts the card) ---
+bool app_can_sd_is_mounted(void);
+int  app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
+bool app_can_sd_delete_file(const char *path);
 
 #ifdef __cplusplus
 }

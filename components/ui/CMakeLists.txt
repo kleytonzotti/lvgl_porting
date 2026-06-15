@@ -11,6 +11,7 @@ idf_component_register(
         "src/ui_screen_ecu.c"
         "src/ui_screen_can.c"
         "src/ui_screen_can_sniffer.c"
+        "src/ui_screen_sd_browser.c"
         "src/ui_screen_datalogger.c"
         "src/ui_screen_config.c"
         "src/ui_screen_sistema.c"
