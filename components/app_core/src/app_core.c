@@ -6,4 +6,5 @@ void app_core_init(void)
 {
     app_io_init();
     app_can_init();
+    app_can_sniffer_start();  // fulltime: start collecting at boot
 }

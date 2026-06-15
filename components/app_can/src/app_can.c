@@ -18,7 +18,7 @@
 #include "freertos/task.h"
 #include "sdmmc_cmd.h"
 
-#define APP_CAN_RX_QUEUE_LEN    64
+#define APP_CAN_RX_QUEUE_LEN    128
 #define APP_CAN_TASK_STACK      4096
 #define APP_CAN_TASK_PRIORITY   6
 #define APP_CAN_SD_MOUNT        "/sdcard"
@@ -313,6 +313,27 @@ esp_err_t app_can_init(void)
 
 esp_err_t app_can_sniffer_start(void)
 {
+    if (s_running && s_status.log_open) return ESP_OK;  // fully running with log open
+
+    // Running but no log (SD was missing at boot): retry SD mount + log open
+    if (s_running) {
+        bool sd_ok = (app_can_sd_mount() == ESP_OK);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_status.sd_mounted = sd_ok;
+        if (sd_ok) {
+            bool log_ok = (open_log_file_locked() == ESP_OK);
+            if (!log_ok) {
+                snprintf(s_status.last_error, sizeof(s_status.last_error), "Log open failed");
+            } else {
+                s_status.last_error[0] = '\0';
+            }
+        } else {
+            snprintf(s_status.last_error, sizeof(s_status.last_error), "SD mount failed");
+        }
+        xSemaphoreGive(s_lock);
+        return ESP_OK;
+    }
+
     if (!s_lock) {
         ESP_RETURN_ON_ERROR(app_can_init(), TAG, "CAN init failed");
     }
