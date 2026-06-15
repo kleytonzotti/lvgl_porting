@@ -90,7 +90,7 @@ static void format_csv_line(const twai_message_t *msg, uint32_t ms,
     }
 }
 
-static esp_err_t mount_sd_card(void)
+esp_err_t app_can_sd_mount(void)
 {
     if (s_sd_mounted) return ESP_OK;
 
@@ -320,7 +320,7 @@ esp_err_t app_can_sniffer_start(void)
         return err;
     }
 
-    bool sd_ok  = (mount_sd_card() == ESP_OK);
+    bool sd_ok  = (app_can_sd_mount() == ESP_OK);
     bool log_ok = false;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);

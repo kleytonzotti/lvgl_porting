@@ -66,10 +66,11 @@ void app_can_get_filter(uint32_t *id_min_out, uint32_t *id_max_out);
 void        app_can_sniffer_get_status(app_can_status_t *out);
 const char *app_can_sniffer_log_path(void);
 
-// --- SD file browser (usable after sniffer_start which mounts the card) ---
-bool app_can_sd_is_mounted(void);
-int  app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
-bool app_can_sd_delete_file(const char *path);
+// --- SD card (mount independently of the sniffer) ---
+esp_err_t app_can_sd_mount(void);
+bool      app_can_sd_is_mounted(void);
+int       app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
+bool      app_can_sd_delete_file(const char *path);
 
 #ifdef __cplusplus
 }

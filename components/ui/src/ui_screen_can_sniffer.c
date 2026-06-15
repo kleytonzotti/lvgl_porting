@@ -151,7 +151,7 @@ static void update_status(void)
         state_str,
         st.driver_ready ? "OK" : "OFF",
         st.sd_mounted   ? "OK" : "OFF",
-        st.log_open     ? "OK" : "OFF");
+        st.log_open     ? k_filters[s_active_filter].label : "OFF");
 
     lv_label_set_text_fmt(s_lbl_info,
         "IDs:%lu  Frames:%lu  Erros:%lu  %s",
@@ -216,10 +216,12 @@ static void clear_cb(lv_event_t *e)
     }
 }
 
+static void open_sd_browser_from_sniffer(void) { ui_screen_sd_browser_show(ui_screen_can_sniffer_show); }
+
 static void sd_browse_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    ui_nav(ui_screen_sd_browser_show);
+    ui_nav(open_sd_browser_from_sniffer);
 }
 
 static void filter_btn_cb(lv_event_t *e)

@@ -20,6 +20,7 @@ static lv_obj_t *s_lbl_status = NULL;
 
 static app_can_sd_file_t s_files[MAX_FILES];
 static int                s_file_count = 0;
+static void             (*s_back_fn)(void) = NULL;
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -37,7 +38,7 @@ static void screen_delete_cb(lv_event_t *e)
 static void back_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    ui_nav(ui_screen_can_sniffer_show);
+    if (s_back_fn) ui_nav(s_back_fn);
 }
 
 static void delete_cb(lv_event_t *e)
@@ -123,8 +124,9 @@ static void build_list(void)
 // Screen creation
 // ─────────────────────────────────────────────────────
 
-void ui_screen_sd_browser_show(void)
+void ui_screen_sd_browser_show(void (*back_fn)(void))
 {
+    s_back_fn    = back_fn ? back_fn : ui_menu_show;
     s_file_count = 0;
 
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -148,7 +150,7 @@ void ui_screen_sd_browser_show(void)
     lv_obj_set_style_radius(btn_back, 4, 0);
     lv_obj_add_event_cb(btn_back, back_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl = lv_label_create(btn_back);
-    lv_label_set_text(lbl, LV_SYMBOL_LEFT " Sniffer");
+    lv_label_set_text(lbl, LV_SYMBOL_LEFT " Voltar");
     lv_obj_set_style_text_font(lbl, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl);
 
@@ -199,7 +201,8 @@ void ui_screen_sd_browser_show(void)
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 
-    // Load file list
+    // Load file list (mount SD first if not already mounted)
+    app_can_sd_mount();
     s_file_count = app_can_sd_list_csv(s_files, MAX_FILES);
     build_list();
 

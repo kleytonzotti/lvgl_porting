@@ -27,6 +27,9 @@ static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config
 static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
 static void cb_secret_sniffer(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_can_sniffer_show); }
 
+static void open_sd_browser_from_menu(void)  { ui_screen_sd_browser_show(ui_menu_show); }
+static void cb_sd_files(lv_event_t *e)       { LV_UNUSED(e); ui_nav(open_sd_browser_from_menu); }
+
 // Cria um botao do menu.
 static void create_menu_btn(lv_obj_t *parent, const char *icon,
                              const char *label, lv_event_cb_t cb)
@@ -118,14 +121,15 @@ void ui_menu_show(void)
     lv_obj_set_style_flex_track_place(grid, LV_FLEX_ALIGN_CENTER, 0);
     lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
-    create_menu_btn(grid, LV_SYMBOL_CHARGE,   "Dashboard",   cb_dashboard);
-    create_menu_btn(grid, LV_SYMBOL_REFRESH,  "Scanner",     cb_scanner);
-    create_menu_btn(grid, LV_SYMBOL_SETTINGS, "ECU",         cb_ecu);
-    create_menu_btn(grid, LV_SYMBOL_LIST,     "CAN",         cb_can);
-    create_menu_btn(grid, LV_SYMBOL_SAVE,     "Data Logger", cb_datalogger);
-    create_menu_btn(grid, LV_SYMBOL_EDIT,     "Configuracoes", cb_config);
-    create_menu_btn(grid, LV_SYMBOL_HOME,     "Sistema",     cb_sistema);
+    create_menu_btn(grid, LV_SYMBOL_CHARGE,     "Dashboard",    cb_dashboard);
+    create_menu_btn(grid, LV_SYMBOL_REFRESH,    "Scanner",      cb_scanner);
+    create_menu_btn(grid, LV_SYMBOL_SETTINGS,   "ECU",          cb_ecu);
+    create_menu_btn(grid, LV_SYMBOL_LIST,       "CAN",          cb_can);
+    create_menu_btn(grid, LV_SYMBOL_SAVE,       "Data Logger",  cb_datalogger);
+    create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Arquivos SD",  cb_sd_files);
+    create_menu_btn(grid, LV_SYMBOL_EDIT,       "Configuracoes", cb_config);
+    create_menu_btn(grid, LV_SYMBOL_HOME,       "Sistema",      cb_sistema);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    ESP_LOGI(TAG, "Menu principal exibido - 7 botoes disponiveis");
+    ESP_LOGI(TAG, "Menu principal exibido - 8 botoes disponiveis");
 }
