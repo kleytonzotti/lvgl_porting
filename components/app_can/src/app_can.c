@@ -432,11 +432,13 @@ int app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files)
         if (!(ext[0]=='.' && (ext[1]=='c'||ext[1]=='C') &&
               (ext[2]=='s'||ext[2]=='S') && (ext[3]=='v'||ext[3]=='V'))) continue;
 
-        snprintf(out[count].name, sizeof(out[count].name), "%s", name);
+        snprintf(out[count].name, sizeof(out[count].name), "%.*s",
+                 (int)(sizeof(out[count].name) - 1), name);
 
-        // Get size
+        // Get size — usa o nome já truncado para que o compilador
+        // possa verificar que full (64) cabe "/sdcard/" (8) + name (39) + \0
         char full[64];
-        snprintf(full, sizeof(full), APP_CAN_SD_MOUNT "/%s", name);
+        snprintf(full, sizeof(full), APP_CAN_SD_MOUNT "/%s", out[count].name);
         struct stat st;
         out[count].size_kb = (stat(full, &st) == 0) ? (uint32_t)(st.st_size / 1024) : 0;
         count++;
