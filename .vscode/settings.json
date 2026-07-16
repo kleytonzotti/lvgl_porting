@@ -5,15 +5,16 @@
     "board/esp32s3-builtin.cfg"
   ],
   "idf.portWin": "COM17",
-  "idf.currentSetup": "D:\\.espressif\\v5.4.4\\esp-idf",
+  "idf.currentSetup": "/home/zotti/.espressif/v5.5.4/esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
-  "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+  "clangd.path": "/home/zotti/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=d:\\repo\\lvgl_porting\\lvgl_porting\\build"
+    "--compile-commands-dir=/home/zotti/repo/lvgl_porting-1/lvgl_porting/build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "/dev/ttyACM0"
 }

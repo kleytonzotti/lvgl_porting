@@ -1,9 +1,57 @@
-Flash size = 16mb;
-PSRAM:
-    [*] Support for external, SPI-connected RAM
-    [*] Initialize SPI RAM during startup
-    Quad Mode PSRAM
-    40 MHz
+# LVGL Porting — Waveshare ESP32-S3-Touch-LCD-4.3B
 
-    idf.py menuconfig
-        Component config → LVGL configuration → Font usage → Enable Montserrat 16
+Porting do LVGL 9 para o display Waveshare ESP32-S3-Touch-LCD-4.3B (módulo ESP32-S3-N16R8).
+
+## Hardware
+
+- Placa: Waveshare ESP32-S3-Touch-LCD-4.3B
+- Módulo: ESP32-S3-N16R8 — 16MB Flash + 8MB PSRAM **Octal**
+- Touch: GT911
+
+## Toolchain
+
+- ESP-IDF: **v5.5.4** (target `esp32s3`)
+- Build/flash feito pela extensão ESP-IDF do VSCode (`idf.currentSetup` em [.vscode/settings.json](.vscode/settings.json)); `idf.py` não está disponível como CLI solto neste ambiente — use sempre os comandos da extensão (Reconfigure / Build / Flash / Monitor).
+- Porta serial: configurada em `idf.port` (`.vscode/settings.json`) — ajuste para a porta do seu SO (`/dev/ttyACM0` no Linux, `COMx` no Windows).
+
+## Configuração obrigatória (sdkconfig)
+
+Toda a configuração necessária já está em [sdkconfig.defaults](sdkconfig.defaults) e é aplicada automaticamente ao gerar o `sdkconfig`:
+
+```
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+```
+
+**Por quê essas duas seções precisam estar sempre alinhadas:** no ESP32-S3, flash e PSRAM compartilham o mesmo clock do MSPI (`CONFIG_SOC_MEMSPI_CORE_CLK_SHARED_WITH_PSRAM`). PSRAM em Quad/40MHz, ou qualquer combinação onde a PSRAM esteja em Octal/80MHz mas o flash não acompanhe (ex: flash ainda em DIO/40MHz), corrompe o framebuffer — o painel RGB faz DMA contínuo direto da PSRAM, então qualquer inconsistência de timing nesse barramento aparece como imagem embaralhada na tela. Já aconteceu nas duas formas (PSRAM errada e depois flash errado) durante o desenvolvimento.
+
+**Importante ao alterar `sdkconfig.defaults`:** o arquivo `sdkconfig` (gerado, fora do git) só recebe valores de `sdkconfig.defaults` para símbolos que **ainda não têm valor salvo**. Se você mudar `sdkconfig.defaults` e rodar apenas "Reconfigure Project", valores antigos já presentes no `sdkconfig` (ex: modo Quad, flash DIO) **não são sobrescritos**. Para garantir que a mudança realmente é aplicada:
+
+1. Apague o `sdkconfig` local.
+2. Rode **ESP-IDF: Reconfigure Project** (ou abra e salve o SDK Configuration Editor) para gerar um `sdkconfig` novo a partir do `sdkconfig.defaults`.
+3. Confira que `CONFIG_SPIRAM_MODE_OCT`, `CONFIG_SPIRAM_SPEED_80M`, `CONFIG_ESPTOOLPY_FLASHMODE_QIO` e `CONFIG_ESPTOOLPY_FLASHFREQ_80M` estão realmente marcados no novo `sdkconfig`.
+4. **Build** e depois **Flash** (reconfigurar sozinho não gera novo binário nem regrava a placa).
+
+## Partição
+
+- Tabela de partição single-app custom: `partitions_singleapp.csv`, offset `0x8000` (ver `CONFIG_PARTITION_TABLE_*` no `sdkconfig`).
+
+## LVGL / Fontes
+
+- Fonte padrão do LVGL: Montserrat 14 (`CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14`).
+- Fontes customizadas do projeto (além das do Kconfig do LVGL) ficam em [components/ui/include/zotti_fonts.h](components/ui/include/zotti_fonts.h).
+
+## Dependências (managed components)
+
+Ver [main/idf_component.yml](main/idf_component.yml):
+- `lvgl/lvgl` `^9.3.0`
+- `espressif/esp_lvgl_port` `^2.0.0`
+- `espressif/esp_lcd_touch_gt911` `>=1.0.0`
+- `espressif/esp_lcd_touch` `>=1.0.0`
