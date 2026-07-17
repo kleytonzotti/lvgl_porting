@@ -51,7 +51,7 @@ static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
                                      int32_t y_pos)
 {
     lv_obj_t *card = lv_obj_create(parent);
-    lv_obj_set_size(card, 260, 55);
+    lv_obj_set_size(card, 215, 55);
     lv_obj_set_pos(card, 10, y_pos);
     lv_obj_set_style_bg_color(card, ZOTTI_BG_CARD, 0);
     lv_obj_set_style_border_color(card, ZOTTI_BORDER, 0);
@@ -262,10 +262,10 @@ void ui_screen_dashboard_show(void)
     lv_obj_align(lbl_sensors, LV_ALIGN_TOP_MID, 0, 10);
 
     s_lbl_tps  = create_sensor_card(col_right, "TPS",        70);
-    s_lbl_afr  = create_sensor_card(col_right, "AFR",       135);
-    s_lbl_ect  = create_sensor_card(col_right, "ECT",       200);
-    s_lbl_iat  = create_sensor_card(col_right, "IAT",       265);
-    s_lbl_batt = create_sensor_card(col_right, "BATERIA",   330);
+    //s_lbl_afr  = create_sensor_card(col_right, "AFR",       135);
+    //s_lbl_ect  = create_sensor_card(col_right, "ECT",       200);
+    //s_lbl_iat  = create_sensor_card(col_right, "IAT",       265);
+    s_lbl_batt = create_sensor_card(col_right, "BATERIA",   135);//330
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
     ESP_LOGI(TAG, "Dashboard criado");

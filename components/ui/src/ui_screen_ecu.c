@@ -100,7 +100,7 @@ void ui_screen_ecu_show(void)
         lv_obj_set_style_bg_color(card, ZOTTI_BG_CARD, 0);
         lv_obj_set_style_border_color(card, ZOTTI_BORDER, 0);
         lv_obj_set_style_border_width(card, 1, 0);
-        lv_obj_set_style_radius(card, 6, 0);
+        lv_obj_set_style_radius(card, 20, 0);
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
         // Indicador lateral
