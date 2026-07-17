@@ -1,12 +1,10 @@
 idf_component_register(
     SRCS
-        "src/app_core.c"
+        "src/app_ble.c"
 
     INCLUDE_DIRS
         "include"
 
     REQUIRES
-        app_io
-        app_can
-        app_ble
+        bt
 )
