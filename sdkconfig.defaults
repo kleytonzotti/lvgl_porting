@@ -19,3 +19,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # BLE via NimBLE (app_ble)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+# Default (INFO) faz o host logar cada advertising/scan report continuamente
+# no monitor serial; WARNING deixa so erros/avisos.
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

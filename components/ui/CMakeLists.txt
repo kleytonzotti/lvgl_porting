@@ -33,6 +33,7 @@ idf_component_register(
         app_io
         app_core
         app_can
+        app_ble
         lvgl__lvgl
         esp_common
         assets
