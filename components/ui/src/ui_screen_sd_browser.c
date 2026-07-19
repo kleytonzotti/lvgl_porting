@@ -3,6 +3,7 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -304,8 +305,15 @@ static void build_list(void)
         return;
     }
 
+    ESP_LOGI(TAG, "[DIAG-SD-LIST] iniciando build_list: %d entradas | internal_free=%uB",
+             s_entry_count, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
     for (int i = 0; i < s_entry_count; i++) {
         bool is_dir = s_entries[i].is_dir;
+
+        ESP_LOGI(TAG, "[DIAG-SD-LIST] linha %d/%d (%s) | internal_free=%uB",
+                 i, s_entry_count, s_entries[i].name,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
         lv_obj_t *row = lv_obj_create(s_list);
         lv_obj_set_size(row, 760, 44);

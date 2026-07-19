@@ -22,9 +22,23 @@ typedef enum {
     APP_DASH_GAUGE_ANALOG  = 1,
 } app_dash_gauge_style_t;
 
+// Modelo de tela — arranjo inteiro dos widgets, não só o estilo do
+// mostrador de RPM. Cada um tem seu próprio builder em ui_screen_dashboard.c.
+//   CLASSIC: o layout original (arco/digital + 3 colunas de sensores).
+//   RACE:    estilo FuelTech — RPM digital grande + barra de shift light
+//            progressiva + G-meter (usa accel_g do app_ecu/app_sim).
+//   GRID:    estilo Injepro — numérico central + ponteiro analógico +
+//            grade de mostradores menores com mínimo/máximo salvo.
+typedef enum {
+    APP_DASH_LAYOUT_CLASSIC = 0,
+    APP_DASH_LAYOUT_RACE    = 1,
+    APP_DASH_LAYOUT_GRID    = 2,
+} app_dash_layout_t;
+
 typedef struct {
     char                   name[APP_DASH_PROFILE_NAME_LEN];
     app_dash_gauge_style_t gauge_style;
+    app_dash_layout_t      layout;
     uint16_t               redline_rpm;
     uint8_t                color_theme;   // índice na paleta definida na UI
 } app_dash_profile_t;

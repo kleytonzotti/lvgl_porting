@@ -5,6 +5,7 @@
 #include "app_ecu.h"
 #include "app_sim.h"
 #include "app_dash_profile.h"
+#include "app_dash_minmax.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -38,6 +39,20 @@ static lv_obj_t *s_lbl_batt    = NULL;
 static lv_obj_t *s_lbl_status  = NULL;
 static lv_obj_t *s_ticks[RPM_TICK_COUNT];
 
+// Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
+// esse layout está ativo.
+#define SHIFT_SEGMENTS 10
+static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
+static lv_obj_t *s_lbl_gmeter = NULL;
+static lv_obj_t *s_bar_gmeter = NULL;
+
+// Widgets exclusivos do layout Grid (estilo Injepro) — grade de mostradores
+// menores, cada um com mínimo/máximo salvo.
+typedef enum { GRID_SPEED, GRID_MAP, GRID_TPS, GRID_ECT, GRID_IAT, GRID_BATT, GRID_AFR, GRID_CH_COUNT } grid_ch_t;
+static const char *k_grid_names[GRID_CH_COUNT] = { "VEL", "MAP", "TPS", "ECT", "IAT", "BAT", "AFR" };
+static lv_obj_t *s_grid_val[GRID_CH_COUNT];
+static lv_obj_t *s_grid_mm[GRID_CH_COUNT];
+
 static lv_obj_t   *s_scr           = NULL;
 static lv_timer_t *s_timer         = NULL;
 static bool        s_redline_flash = false;
@@ -50,6 +65,7 @@ static lv_obj_t *s_modal_overlay     = NULL;
 static lv_obj_t *s_modal_list        = NULL;
 static lv_obj_t *s_modal_lbl_style   = NULL;
 static lv_obj_t *s_modal_lbl_redline = NULL;
+static lv_obj_t *s_modal_lbl_layout  = NULL;
 
 // ─────────────────────────────────────────────────────
 // Estilo do mostrador (digital vs analógico)
@@ -141,24 +157,92 @@ static void animate_arc_to(lv_obj_t *arc, int32_t value)
     lv_anim_start(&a);
 }
 
-// Atualiza os dados da dashboard.
+// ─────────────────────────────────────────────────────
+// Barra de shift light (layout Race, estilo FuelTech) — segmentos acendem
+// progressivamente conforme o RPM sobe; verde/amarelo/vermelho por faixa.
+// ─────────────────────────────────────────────────────
+
+static void update_shift_bar(int32_t rpm, uint16_t redline)
+{
+    if (!s_shift_seg[0] || redline == 0) return;
+
+    for (int i = 0; i < SHIFT_SEGMENTS; i++) {
+        // Deixa 2 "segmentos" de folga acima do redline — os 10 acendem
+        // um pouco antes do corte, não só exatamente nele.
+        float threshold = (float)redline * (float)(i + 1) / (float)(SHIFT_SEGMENTS + 2);
+        bool  lit = (float)rpm >= threshold;
+        lv_color_t base = (i < 5) ? ZOTTI_GREEN : (i < 8) ? ZOTTI_YELLOW : ZOTTI_RED;
+        lv_obj_set_style_bg_color(s_shift_seg[i], base, 0);
+        lv_obj_set_style_bg_opa(s_shift_seg[i], lit ? LV_OPA_COVER : LV_OPA_20, 0);
+    }
+}
+
+// ─────────────────────────────────────────────────────
+// G-meter (layout Race) — aceleração longitudinal (accel_g do app_ecu/app_sim).
+// Barra simétrica: enche a partir do centro pro lado positivo ou negativo.
+// ─────────────────────────────────────────────────────
+
+static void update_gmeter(float accel_g)
+{
+    if (!s_lbl_gmeter) return;
+    lv_label_set_text_fmt(s_lbl_gmeter, "%+.2f G", (double)accel_g);
+
+    if (s_bar_gmeter) {
+        int32_t bar_val = (int32_t)(accel_g * 100.0f);
+        if (bar_val > 100) bar_val = 100;
+        if (bar_val < -100) bar_val = -100;
+        lv_bar_set_value(s_bar_gmeter, bar_val, LV_ANIM_ON);
+    }
+}
+
+// ─────────────────────────────────────────────────────
+// Grade de mostradores com mínimo/máximo (layout Grid, estilo Injepro).
+// ─────────────────────────────────────────────────────
+
+static void update_grid_tiles(float speed, float map_kpa, float tps, float ect,
+                               float iat, float batt, float afr)
+{
+    if (!s_grid_val[0]) return;
+
+    float vals[GRID_CH_COUNT] = { speed, map_kpa, tps, ect, iat, batt, afr };
+
+    app_dash_minmax_t mm;
+    app_dash_minmax_get(&mm);
+    float mins[GRID_CH_COUNT] = { mm.speed_min, mm.map_min, mm.tps_min, mm.ect_min, mm.iat_min, mm.batt_min, mm.afr_min };
+    float maxs[GRID_CH_COUNT] = { mm.speed_max, mm.map_max, mm.tps_max, mm.ect_max, mm.iat_max, mm.batt_max, mm.afr_max };
+
+    for (int i = 0; i < GRID_CH_COUNT; i++) {
+        if (!s_grid_val[i]) continue;
+        lv_label_set_text_fmt(s_grid_val[i], "%.1f", (double)vals[i]);
+        if (s_grid_mm[i]) {
+            lv_label_set_text_fmt(s_grid_mm[i], "%.0f / %.0f", (double)mins[i], (double)maxs[i]);
+        }
+    }
+}
+
+// Atualiza os dados da dashboard. accel_g vem do app_sim (demo) ou é 0 pra
+// dados reais do app_ecu ainda (o protocolo v1 do app_ecu não manda
+// aceleração — ver ROADMAP.md se isso precisar entrar no futuro).
 void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
                                  int32_t map_kpa, int32_t tps_pct,
                                  float afr, int32_t ect_c,
-                                 int32_t iat_c, float batt_v)
+                                 int32_t iat_c, float batt_v, float accel_g)
 {
-    if (!s_arc_rpm) return;
+    // Mín/máx acompanha independente de qual layout está na tela (assim
+    // como no Injepro, os recordes ficam guardados mesmo trocando de tela).
+    app_dash_minmax_update((float)rpm, (float)speed_kph, (float)map_kpa, (float)tps_pct,
+                          (float)ect_c, (float)iat_c, batt_v, afr);
 
-    animate_arc_to(s_arc_rpm, rpm);
-    lv_label_set_text_fmt(s_lbl_rpm,   "%ld", (long)rpm);
-    lv_label_set_text_fmt(s_lbl_speed, "%ld", (long)speed_kph);
-    lv_bar_set_value(s_bar_tps, tps_pct, LV_ANIM_ON);
-    lv_label_set_text_fmt(s_lbl_map,  "%ld kPa", (long)map_kpa);
-    lv_label_set_text_fmt(s_lbl_tps,  "%ld%%", (long)tps_pct);
+    if (s_arc_rpm) animate_arc_to(s_arc_rpm, rpm);
+    if (s_lbl_rpm)   lv_label_set_text_fmt(s_lbl_rpm,   "%ld", (long)rpm);
+    if (s_lbl_speed) lv_label_set_text_fmt(s_lbl_speed, "%ld", (long)speed_kph);
+    if (s_bar_tps)   lv_bar_set_value(s_bar_tps, tps_pct, LV_ANIM_ON);
+    if (s_lbl_map)   lv_label_set_text_fmt(s_lbl_map,  "%ld kPa", (long)map_kpa);
+    if (s_lbl_tps)   lv_label_set_text_fmt(s_lbl_tps,  "%ld%%", (long)tps_pct);
     if (s_lbl_afr)  lv_label_set_text_fmt(s_lbl_afr,  "%.1f", afr);
     if (s_lbl_ect)  lv_label_set_text_fmt(s_lbl_ect,  "%ld C", (long)ect_c);
     if (s_lbl_iat)  lv_label_set_text_fmt(s_lbl_iat,  "%ld C", (long)iat_c);
-    lv_label_set_text_fmt(s_lbl_batt, "%.1fV", batt_v);
+    if (s_lbl_batt)  lv_label_set_text_fmt(s_lbl_batt, "%.1fV", batt_v);
 
     // Cor do ECT: verde < 90 C, amarelo 90-105 C, vermelho > 105 C.
     if (s_lbl_ect) {
@@ -172,6 +256,11 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
         lv_color_t afr_color = (afr > 14.0f && afr < 15.4f) ? ZOTTI_GREEN : ZOTTI_YELLOW;
         lv_obj_set_style_text_color(s_lbl_afr, afr_color, 0);
     }
+
+    update_shift_bar(rpm, s_active_profile.redline_rpm);
+    update_gmeter(accel_g);
+    update_grid_tiles((float)speed_kph, (float)map_kpa, (float)tps_pct,
+                       (float)ect_c, (float)iat_c, batt_v, afr);
 
     // Efeito de corte — 90% do redline do perfil ativo, com pequena
     // histerese (85%) pra nao ficar oscilando ligando/desligando na borda.
@@ -194,7 +283,7 @@ static void update_timer_cb(lv_timer_t *timer)
         app_sim_data_t d;
         app_sim_get_data(&d);
         ui_screen_dashboard_update(d.rpm, d.speed_kph, d.map_kpa, d.tps_pct,
-                                   d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v);
+                                   d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, d.accel_g);
         return;
     }
 
@@ -213,7 +302,7 @@ static void update_timer_cb(lv_timer_t *timer)
     if (!d.valid) return;
 
     ui_screen_dashboard_update(d.rpm, 0, d.map_kpa, d.tps_pct,
-                               d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v);
+                               d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, 0.0f);
 }
 
 // Card de sensor (lado direito).
@@ -255,6 +344,16 @@ static void persist_active_profile(void)
     app_dash_profile_save((uint32_t)s_active_index, &s_active_profile);
 }
 
+static const char *layout_name(app_dash_layout_t layout)
+{
+    switch (layout) {
+    case APP_DASH_LAYOUT_RACE: return "Race";
+    case APP_DASH_LAYOUT_GRID: return "Grid";
+    case APP_DASH_LAYOUT_CLASSIC:
+    default:                   return "Classico";
+    }
+}
+
 static void refresh_modal_editor_labels(void)
 {
     if (s_modal_lbl_style) {
@@ -264,6 +363,10 @@ static void refresh_modal_editor_labels(void)
     }
     if (s_modal_lbl_redline) {
         lv_label_set_text_fmt(s_modal_lbl_redline, "Corte: %u rpm", (unsigned)s_active_profile.redline_rpm);
+    }
+    if (s_modal_lbl_layout) {
+        lv_label_set_text_fmt(s_modal_lbl_layout, LV_SYMBOL_IMAGE "  Modelo: %s",
+                              layout_name(s_active_profile.layout));
     }
 }
 
@@ -309,6 +412,22 @@ static void profile_style_toggle_cb(lv_event_t *e)
     refresh_modal_editor_labels();
 }
 
+static void profile_layout_toggle_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    s_active_profile.layout = (app_dash_layout_t)((s_active_profile.layout + 1) % 3);
+    persist_active_profile();
+
+    // Layout novo = arvore de widgets diferente — a forma segura de trocar
+    // é recriar a tela inteira (mesmo caminho de ui_nav pra qualquer tela).
+    if (s_modal_overlay) {
+        lv_obj_delete(s_modal_overlay);
+        s_modal_overlay = s_modal_list = s_modal_lbl_style = NULL;
+        s_modal_lbl_redline = s_modal_lbl_layout = NULL;
+    }
+    ui_nav(ui_screen_dashboard_show);
+}
+
 static void profile_redline_dec_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
@@ -323,6 +442,12 @@ static void profile_redline_inc_cb(lv_event_t *e)
     if (s_active_profile.redline_rpm < 12000) s_active_profile.redline_rpm += 250;
     persist_active_profile();
     refresh_modal_editor_labels();
+}
+
+static void profile_reset_minmax_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    app_dash_minmax_reset();
 }
 
 static void profile_save_new_cb(lv_event_t *e)
@@ -414,7 +539,7 @@ static void profiles_btn_cb(lv_event_t *e)
     s_modal_overlay = overlay;
 
     lv_obj_t *dlg = lv_obj_create(overlay);
-    lv_obj_set_size(dlg, 520, 380);
+    lv_obj_set_size(dlg, 520, 430);
     lv_obj_center(dlg);
     lv_obj_set_style_bg_color(dlg, lv_color_hex(0x0D1F33), 0);
     lv_obj_set_style_border_color(dlg, ZOTTI_ACCENT, 0);
@@ -442,9 +567,9 @@ static void profiles_btn_cb(lv_event_t *e)
     s_modal_list = list_cont;
     rebuild_profile_modal_list();
 
-    // Editor do perfil ativo: estilo + corte.
+    // Editor do perfil ativo: estilo + corte + modelo de layout + reset min/max.
     lv_obj_t *editor = lv_obj_create(dlg);
-    lv_obj_set_size(editor, 490, 90);
+    lv_obj_set_size(editor, 490, 140);
     lv_obj_align(editor, LV_ALIGN_TOP_MID, 0, 220);
     lv_obj_set_style_bg_color(editor, ZOTTI_BG_HEADER, 0);
     lv_obj_set_style_border_width(editor, 0, 0);
@@ -483,6 +608,28 @@ static void profiles_btn_cb(lv_event_t *e)
     lv_obj_t *lbl_inc = lv_label_create(btn_inc);
     lv_label_set_text(lbl_inc, "+");
     lv_obj_center(lbl_inc);
+
+    // Linha 2: modelo de layout + zerar min/max.
+    lv_obj_t *btn_layout = lv_btn_create(editor);
+    lv_obj_set_size(btn_layout, 220, 34);
+    lv_obj_align(btn_layout, LV_ALIGN_TOP_LEFT, 12, 54);
+    lv_obj_set_style_bg_color(btn_layout, ZOTTI_ACCENT_DIM, 0);
+    lv_obj_set_style_radius(btn_layout, 4, 0);
+    lv_obj_add_event_cb(btn_layout, profile_layout_toggle_cb, LV_EVENT_CLICKED, NULL);
+    s_modal_lbl_layout = lv_label_create(btn_layout);
+    lv_obj_set_style_text_font(s_modal_lbl_layout, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(s_modal_lbl_layout);
+
+    lv_obj_t *btn_reset_mm = lv_btn_create(editor);
+    lv_obj_set_size(btn_reset_mm, 190, 34);
+    lv_obj_align(btn_reset_mm, LV_ALIGN_TOP_RIGHT, -12, 54);
+    lv_obj_set_style_bg_color(btn_reset_mm, lv_color_hex(0x3A2000), 0);
+    lv_obj_set_style_radius(btn_reset_mm, 4, 0);
+    lv_obj_add_event_cb(btn_reset_mm, profile_reset_minmax_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_reset_mm = lv_label_create(btn_reset_mm);
+    lv_label_set_text(lbl_reset_mm, LV_SYMBOL_REFRESH "  Zerar Min/Max");
+    lv_obj_set_style_text_font(lbl_reset_mm, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_reset_mm);
 
     lv_obj_t *btn_save_new = lv_btn_create(editor);
     lv_obj_set_size(btn_save_new, 220, 30);
@@ -528,9 +675,15 @@ static void screen_delete_cb(lv_event_t *e)
     if (s_arc_rpm) lv_anim_delete(s_arc_rpm, NULL);   // mata anim de arco + anim de corte
     s_redline_flash = false;
     s_scr = s_arc_rpm = s_lbl_rpm = s_lbl_speed = NULL;
+    s_lbl_map = s_lbl_tps = s_lbl_afr = s_lbl_ect = s_lbl_iat = s_lbl_batt = NULL;
+    s_bar_tps = NULL;
     s_lbl_status = NULL;
+    s_lbl_gmeter = s_bar_gmeter = NULL;
     s_modal_overlay = s_modal_list = s_modal_lbl_style = s_modal_lbl_redline = NULL;
+    s_modal_lbl_layout = NULL;
     for (int i = 0; i < RPM_TICK_COUNT; i++) s_ticks[i] = NULL;
+    for (int i = 0; i < SHIFT_SEGMENTS; i++) s_shift_seg[i] = NULL;
+    for (int i = 0; i < GRID_CH_COUNT; i++) { s_grid_val[i] = NULL; s_grid_mm[i] = NULL; }
 }
 
 // Dashboard.
