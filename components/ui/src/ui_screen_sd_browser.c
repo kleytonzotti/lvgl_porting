@@ -9,7 +9,7 @@
 
 static const char *TAG = "UI_SD";
 
-#define MAX_ENTRIES  48
+#define MAX_ENTRIES  APP_CAN_SD_MAX_ENTRIES
 #define SD_ROOT      "/sdcard"
 
 // ─────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ static char               s_current_path[128];
 // Forward declarations
 // ─────────────────────────────────────────────────────
 static void build_list(void);
-static void reload_current_dir(void);
+static void request_reload(void);
 
 // ─────────────────────────────────────────────────────
 // Path helpers
@@ -50,29 +50,89 @@ static void go_up(void)
             strncpy(s_current_path, SD_ROOT, sizeof(s_current_path) - 1);
         }
     }
-    reload_current_dir();
+    request_reload();
 }
 
 // ─────────────────────────────────────────────────────
 // Async helpers
+//
+// As funções abaixo com sufixo "_from_worker" são chamadas PELA task
+// dedicada de SD (app_can.c: sd_worker_task), nunca pela task do LVGL —
+// por isso elas só podem fazer uma coisa seguramente: agendar o trabalho
+// de verdade na tela via lv_async_call. As funções "_async" (chamadas por
+// lv_async_call) são as únicas que mexem em lv_obj, e sempre checam se a
+// tela ainda existe antes (o usuário pode ter saído da tela enquanto o
+// pedido de SD ainda estava em andamento).
 // ─────────────────────────────────────────────────────
 
-static void reload_async(void *arg)   { LV_UNUSED(arg); reload_current_dir(); }
-static void go_up_async(void *arg)    { LV_UNUSED(arg); go_up(); }
+static void apply_dir_result_async(void *arg)
+{
+    LV_UNUSED(arg);
+    if (!s_scr) return;   // tela já foi fechada enquanto o pedido rodava
+
+    s_entry_count = app_can_sd_async_get_dir_result(s_entries, MAX_ENTRIES);
+
+    // Trava de segurança: s_entries[] só tem MAX_ENTRIES posições — nunca
+    // iterar além disso em build_list(), não importa o que a contagem diga.
+    // Sem isso, uma contagem errada vira leitura fora do array e um loop
+    // de criação de lv_obj que não termina (foi o que travou antes).
+    if (s_entry_count > (int)MAX_ENTRIES) {
+        ESP_LOGE(TAG, "contagem de SD (%d) maior que o buffer (%d) — truncando",
+                 s_entry_count, (int)MAX_ENTRIES);
+        s_entry_count = (int)MAX_ENTRIES;
+    }
+
+    if (s_lbl_status) {
+        if (s_entry_count < 0) {
+            lv_label_set_text(s_lbl_status, "Erro");
+        } else {
+            lv_label_set_text_fmt(s_lbl_status, "%d item(s)", s_entry_count);
+        }
+    }
+
+    if (s_list) lv_obj_clean(s_list);
+    build_list();
+
+    ESP_LOGI(TAG, "SD dir '%s': %d entries", s_current_path, s_entry_count);
+}
+
+static void on_list_done_from_worker(void)
+{
+    lv_async_call(apply_dir_result_async, NULL);
+}
+
+// Não bloqueia: só enfileira mount+list na task dedicada de SD e volta na
+// hora. O resultado chega depois, via on_list_done_from_worker -> lv_async_call.
+static void request_reload(void)
+{
+    if (s_lbl_status) lv_label_set_text(s_lbl_status, "Carregando...");
+    if (s_lbl_path) {
+        // Atualiza o caminho na hora — é só formatação de texto, não é I/O.
+        const char *rel = s_current_path + strlen(SD_ROOT);
+        lv_label_set_text_fmt(s_lbl_path, "SD:%s%s",
+                              at_root() ? "" : rel,
+                              at_root() ? "/" : "");
+    }
+    if (s_lbl_back) {
+        lv_label_set_text(s_lbl_back,
+                          at_root() ? LV_SYMBOL_LEFT " Voltar"
+                                    : LV_SYMBOL_LEFT " ..");
+    }
+
+    app_can_sd_async_mount(NULL);
+    app_can_sd_async_list_dir(s_current_path, on_list_done_from_worker);
+}
 
 // ─────────────────────────────────────────────────────
 // Format modal
 // ─────────────────────────────────────────────────────
 
-static void format_confirm_cb(lv_event_t *e)
+static void apply_format_result_async(void *arg)
 {
-    lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
-    if (overlay) lv_obj_delete(overlay);
+    LV_UNUSED(arg);
+    if (!s_scr) return;
 
-    if (s_lbl_status) lv_label_set_text(s_lbl_status, "Formatando...");
-
-    esp_err_t err = app_can_sd_format();
-
+    esp_err_t err = app_can_sd_async_get_last_err();
     if (s_lbl_status) {
         if (err == ESP_OK) {
             lv_label_set_text(s_lbl_status, "Formatado com sucesso!");
@@ -83,10 +143,23 @@ static void format_confirm_cb(lv_event_t *e)
         }
     }
 
-    // Return to root and reload
     strncpy(s_current_path, SD_ROOT, sizeof(s_current_path) - 1);
     s_current_path[sizeof(s_current_path) - 1] = '\0';
-    lv_async_call(reload_async, NULL);
+    request_reload();
+}
+
+static void on_format_done_from_worker(void)
+{
+    lv_async_call(apply_format_result_async, NULL);
+}
+
+static void format_confirm_cb(lv_event_t *e)
+{
+    lv_obj_t *overlay = (lv_obj_t *)lv_event_get_user_data(e);
+    if (overlay) lv_obj_delete(overlay);
+
+    if (s_lbl_status) lv_label_set_text(s_lbl_status, "Formatando...");
+    app_can_sd_async_format(on_format_done_from_worker);
 }
 
 static void format_cancel_cb(lv_event_t *e)
@@ -174,7 +247,7 @@ static void back_cb(lv_event_t *e)
     if (at_root()) {
         if (s_back_fn) ui_nav(s_back_fn);
     } else {
-        lv_async_call(go_up_async, NULL);
+        go_up();
     }
 }
 
@@ -190,7 +263,12 @@ static void enter_dir_cb(lv_event_t *e)
         s_current_path[cur_len] = '/';
         memcpy(s_current_path + cur_len + 1, s_entries[idx].name, name_len + 1);
     }
-    lv_async_call(reload_async, NULL);
+    request_reload();
+}
+
+static void on_delete_done_from_worker(void)
+{
+    lv_async_call(apply_dir_result_async, NULL);
 }
 
 static void delete_cb(lv_event_t *e)
@@ -201,29 +279,16 @@ static void delete_cb(lv_event_t *e)
 
     char full_path[172];   // 128 (path) + 1 (/) + 40 (name) + 3 pad
     snprintf(full_path, sizeof(full_path), "%s/%s", s_current_path, s_entries[idx].name);
-    app_can_sd_delete_file(full_path);
 
-    lv_async_call(reload_async, NULL);
+    // O delete em si é rápido (um unlink), mas a listagem seguinte é que
+    // precisa ir pela task de SD — então já reaproveita o mesmo caminho:
+    // apaga de forma assíncrona e, ao terminar, pede a listagem de novo.
+    app_can_sd_async_delete_file(full_path, on_delete_done_from_worker);
 }
 
 // ─────────────────────────────────────────────────────
 // List & path label
 // ─────────────────────────────────────────────────────
-
-static void update_header_labels(void)
-{
-    if (s_lbl_path) {
-        const char *rel = s_current_path + strlen(SD_ROOT);
-        lv_label_set_text_fmt(s_lbl_path, "SD:%s%s",
-                              at_root() ? "" : rel,
-                              at_root() ? "/" : "");
-    }
-    if (s_lbl_back) {
-        lv_label_set_text(s_lbl_back,
-                          at_root() ? LV_SYMBOL_LEFT " Voltar"
-                                    : LV_SYMBOL_LEFT " ..");
-    }
-}
 
 static void build_list(void)
 {
@@ -293,25 +358,6 @@ static void build_list(void)
             lv_obj_center(lbl_del);
         }
     }
-}
-
-static void reload_current_dir(void)
-{
-    s_entry_count = app_can_sd_list_dir(s_current_path, s_entries, MAX_ENTRIES);
-
-    if (s_lbl_status) {
-        if (s_entry_count < 0) {
-            lv_label_set_text(s_lbl_status, "Erro");
-        } else {
-            lv_label_set_text_fmt(s_lbl_status, "%d item(s)", s_entry_count);
-        }
-    }
-
-    if (s_list) lv_obj_clean(s_list);
-    update_header_labels();
-    build_list();
-
-    ESP_LOGI(TAG, "SD dir '%s': %d entries", s_current_path, s_entry_count);
 }
 
 // ─────────────────────────────────────────────────────
@@ -408,7 +454,7 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 
-    // Mount and load root
-    app_can_sd_mount();
-    reload_current_dir();
+    // Não bloqueia: mount+list são enfileirados na task de SD e a tela já
+    // aparece na hora, mostrando "Carregando..." até o resultado chegar.
+    request_reload();
 }

@@ -115,11 +115,11 @@ void ui_screen_datalogger_show(void)
     lv_obj_align(s_lbl_count, LV_ALIGN_RIGHT_MID, -15, 0);
 
     // Canais
-    lv_obj_t *lbl_ch = lv_label_create(ctrl);
-    lv_label_set_text(lbl_ch, "Canais: RPM | TPS | MAP | AFR | Lambda | Vel | ECT | IAT");
-    lv_obj_set_style_text_font(lbl_ch, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(lbl_ch, ZOTTI_ACCENT, 0);
-    lv_obj_align(lbl_ch, LV_ALIGN_BOTTOM_LEFT, 10, -5);
+    //lv_obj_t *lbl_ch = lv_label_create(ctrl);
+    //lv_label_set_text(lbl_ch, "Canais: RPM | TPS | MAP | AFR | Lambda | Vel | ECT | IAT");
+    //lv_obj_set_style_text_font(lbl_ch, ZOTTI_FONT_TINY, 0);
+    //lv_obj_set_style_text_color(lbl_ch, ZOTTI_ACCENT, 0);
+    //lv_obj_align(lbl_ch, LV_ALIGN_BOTTOM_LEFT, 10, -5);
 
     // Cabecalho da lista.
     lv_obj_t *list_hdr = lv_obj_create(scr);

@@ -43,6 +43,8 @@ typedef struct {
     bool     is_dir;
 } app_can_sd_entry_t;
 
+#define APP_CAN_SD_MAX_ENTRIES  48   // shared with the async dir-listing buffer
+
 typedef struct {
     app_can_state_t state;
     bool     driver_ready;
@@ -80,6 +82,27 @@ int       app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files);
 int       app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_entries);
 bool      app_can_sd_delete_file(const char *path);
 esp_err_t app_can_sd_format(void);
+
+// --- SD assíncrono: as funções acima fazem I/O bloqueante — chamar direto
+// de dentro da task do LVGL trava a tela (montagem/listagem de cartão pode
+// levar de dezenas de ms a segundos). As funções abaixo só enfileiram o
+// pedido pra uma task dedicada e retornam na hora; "on_done" é chamado a
+// partir dessa task dedicada (NÃO da task do LVGL) quando terminar — quem
+// implementa on_done e precisa mexer em lv_obj deve usar lv_async_call lá
+// dentro. Retornam false se a fila estiver cheia (pedido não enfileirado).
+typedef void (*app_can_sd_done_cb_t)(void);
+
+bool app_can_sd_async_mount(app_can_sd_done_cb_t on_done);
+bool app_can_sd_async_list_dir(const char *path, app_can_sd_done_cb_t on_done);
+bool app_can_sd_async_delete_file(const char *path, app_can_sd_done_cb_t on_done);
+bool app_can_sd_async_format(app_can_sd_done_cb_t on_done);
+
+// Resultado do último app_can_sd_async_list_dir concluído (chamar depois que
+// on_done disparar). Mesmo retorno de app_can_sd_list_dir (-1 = erro).
+int app_can_sd_async_get_dir_result(app_can_sd_entry_t *out, uint32_t max_entries);
+
+// Resultado da última operação simples concluída (mount/delete/format).
+esp_err_t app_can_sd_async_get_last_err(void);
 
 #ifdef __cplusplus
 }

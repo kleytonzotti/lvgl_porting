@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sdmmc_cmd.h"
@@ -23,6 +24,12 @@
 #define APP_CAN_TASK_PRIORITY   6
 #define APP_CAN_SD_MOUNT        "/sdcard"
 #define APP_CAN_FLUSH_EVERY     32   // flush CSV to SD every N frames
+
+// 8KB: o buffer local de listagem (48 entradas ~2.3KB) + a profundidade de
+// chamada do FATFS/VFS/SDSPI não cabem com folga numa stack de 4KB.
+#define APP_CAN_SD_TASK_STACK      8192
+#define APP_CAN_SD_TASK_PRIORITY   4
+#define APP_CAN_SD_REQ_QUEUE_LEN   4
 
 static const char *TAG = "APP_CAN";
 
@@ -47,6 +54,26 @@ static app_can_status_t  s_status         = {0};
 // --- Software filter ---
 static volatile uint32_t s_filter_min = 0;
 static volatile uint32_t s_filter_max = 0x1FFFFFFF;
+
+// --- SD assíncrono (task dedicada — ver app_can_sd_async_* no header) ---
+typedef enum {
+    SD_ASYNC_OP_MOUNT,
+    SD_ASYNC_OP_LIST_DIR,
+    SD_ASYNC_OP_DELETE,
+    SD_ASYNC_OP_FORMAT,
+} sd_async_op_t;
+
+typedef struct {
+    sd_async_op_t        op;
+    char                  path[128];
+    app_can_sd_done_cb_t  on_done;
+} sd_async_req_t;
+
+static QueueHandle_t      s_sd_req_queue   = NULL;
+static TaskHandle_t       s_sd_task        = NULL;
+static app_can_sd_entry_t s_async_dir_result[APP_CAN_SD_MAX_ENTRIES];
+static int                s_async_dir_count = -1;
+static esp_err_t          s_async_last_err  = ESP_OK;
 
 // ─────────────────────────────────────────────────────
 // Internal helpers
@@ -282,6 +309,90 @@ static void can_sniffer_task(void *arg)
 }
 
 // ─────────────────────────────────────────────────────
+// SD worker task — única task que faz I/O de cartão SD. Todo o trabalho
+// bloqueante (montar, listar diretório, apagar, formatar) acontece aqui,
+// nunca na task do LVGL. Processa um pedido por vez, na ordem em que
+// chegaram na fila.
+// ─────────────────────────────────────────────────────
+
+static void sd_worker_task(void *arg)
+{
+    (void)arg;
+    sd_async_req_t req;
+
+    for (;;) {
+        if (xQueueReceive(s_sd_req_queue, &req, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        switch (req.op) {
+        case SD_ASYNC_OP_MOUNT: {
+            esp_err_t err = app_can_sd_mount();
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            s_async_last_err = err;
+            xSemaphoreGive(s_lock);
+            break;
+        }
+        case SD_ASYNC_OP_LIST_DIR: {
+            // Escreve direto no buffer compartilhado — nada de cópia via
+            // array local na pilha desta task (o antigo "tmp[48]" somava
+            // ~2.3KB de pilha em cima da profundidade de chamada do
+            // FATFS/VFS/SDSPI; era um risco real de estouro de pilha).
+            // Seguro sem lock durante o próprio list_dir: só quem lê esse
+            // buffer é app_can_sd_async_get_dir_result(), e só é lido
+            // depois que req.on_done() dispara logo abaixo — nunca antes
+            // desta chamada terminar.
+            int n = app_can_sd_list_dir(req.path, s_async_dir_result, APP_CAN_SD_MAX_ENTRIES);
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            s_async_dir_count = n;
+            xSemaphoreGive(s_lock);
+            break;
+        }
+        case SD_ASYNC_OP_DELETE: {
+            bool ok = app_can_sd_delete_file(req.path);
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            s_async_last_err = ok ? ESP_OK : ESP_FAIL;
+            xSemaphoreGive(s_lock);
+            break;
+        }
+        case SD_ASYNC_OP_FORMAT: {
+            esp_err_t err = app_can_sd_format();
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            s_async_last_err = err;
+            xSemaphoreGive(s_lock);
+            break;
+        }
+        }
+
+        // Diagnóstico — mesma ideia do [DIAG-LVGL-TASK] em bsp_lvgl_port.c:
+        // se algum dia essa task chegar perto de estourar a pilha, isso
+        // aparece aqui em vez de a gente só ver sintomas em outro lugar.
+        ESP_LOGI(TAG, "[DIAG-SD-TASK] op=%d stack_free=%uB",
+                 (int)req.op, (unsigned)(uxTaskGetStackHighWaterMark(NULL) * 4u));
+
+        if (req.on_done) {
+            req.on_done();
+        }
+    }
+}
+
+static bool sd_async_submit(sd_async_op_t op, const char *path, app_can_sd_done_cb_t on_done)
+{
+    if (!s_sd_req_queue) return false;
+
+    sd_async_req_t req = { .op = op, .on_done = on_done };
+    if (path) {
+        snprintf(req.path, sizeof(req.path), "%s", path);
+    } else {
+        req.path[0] = '\0';
+    }
+
+    // Timeout 0: quem chama (tipicamente a task do LVGL) nunca pode ficar
+    // esperando espaço na fila — se estiver cheia, o pedido é descartado.
+    return xQueueSend(s_sd_req_queue, &req, 0) == pdTRUE;
+}
+
+// ─────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────
 
@@ -304,6 +415,17 @@ esp_err_t app_can_init(void)
         BaseType_t ok = xTaskCreatePinnedToCore(can_sniffer_task, "can_sniff",
                                                 APP_CAN_TASK_STACK, NULL,
                                                 APP_CAN_TASK_PRIORITY, &s_task, 0);
+        if (ok != pdPASS) return ESP_ERR_NO_MEM;
+    }
+
+    if (!s_sd_req_queue) {
+        s_sd_req_queue = xQueueCreate(APP_CAN_SD_REQ_QUEUE_LEN, sizeof(sd_async_req_t));
+        if (!s_sd_req_queue) return ESP_ERR_NO_MEM;
+    }
+    if (!s_sd_task) {
+        BaseType_t ok = xTaskCreate(sd_worker_task, "sd_worker",
+                                    APP_CAN_SD_TASK_STACK, NULL,
+                                    APP_CAN_SD_TASK_PRIORITY, &s_sd_task);
         if (ok != pdPASS) return ESP_ERR_NO_MEM;
     }
 
@@ -528,4 +650,51 @@ esp_err_t app_can_sd_format(void)
     esp_err_t err = esp_vfs_fat_sdcard_format(APP_CAN_SD_MOUNT, s_sd_card);
     ESP_LOGI(TAG, "SD format: %s", esp_err_to_name(err));
     return err;
+}
+
+// --- SD assíncrono: só enfileira, a sd_worker_task faz o trabalho de verdade ---
+
+bool app_can_sd_async_mount(app_can_sd_done_cb_t on_done)
+{
+    return sd_async_submit(SD_ASYNC_OP_MOUNT, NULL, on_done);
+}
+
+bool app_can_sd_async_list_dir(const char *path, app_can_sd_done_cb_t on_done)
+{
+    return sd_async_submit(SD_ASYNC_OP_LIST_DIR, path, on_done);
+}
+
+bool app_can_sd_async_delete_file(const char *path, app_can_sd_done_cb_t on_done)
+{
+    return sd_async_submit(SD_ASYNC_OP_DELETE, path, on_done);
+}
+
+bool app_can_sd_async_format(app_can_sd_done_cb_t on_done)
+{
+    return sd_async_submit(SD_ASYNC_OP_FORMAT, NULL, on_done);
+}
+
+int app_can_sd_async_get_dir_result(app_can_sd_entry_t *out, uint32_t max_entries)
+{
+    if (!out || !s_lock) return -1;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = s_async_dir_count;
+    uint32_t copy_n = (n > 0) ? ((uint32_t)n < max_entries ? (uint32_t)n : max_entries) : 0;
+    if (copy_n > 0) {
+        memcpy(out, s_async_dir_result, copy_n * sizeof(out[0]));
+    }
+    xSemaphoreGive(s_lock);
+    // Nunca devolver uma contagem maior do que o que foi de fato copiado —
+    // um chamador que iterar "out[0..n-1]" sem isso pode ler além do próprio
+    // buffer se algum dia passar um max_entries menor que 48.
+    return (n > 0) ? (int)copy_n : n;
+}
+
+esp_err_t app_can_sd_async_get_last_err(void)
+{
+    if (!s_lock) return ESP_FAIL;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t e = s_async_last_err;
+    xSemaphoreGive(s_lock);
+    return e;
 }

@@ -57,6 +57,21 @@ extern "C" {
 #define BSP_SD_SCLK                 (GPIO_NUM_12)
 #define BSP_SD_MISO                 (GPIO_NUM_13)
 
+// ⚠️ CONFLITO CONHECIDO, NÃO LIGAR NADA AQUI SEM CONFIRMAR:
+// A doc da Waveshare lista GPIO 43/44 como "RS485 onboard", mas o log de
+// boot real deste projeto mostra "GPIO 44 and 43 are used as console UART
+// I/O pins" — são os MESMOS pinos do console/USB de depuração usado pelo
+// idf.py monitor (/dev/ttyACM0). Prováveis explicações: (a) o board
+// multiplexa um único UART entre "modo debug" (USB) e "modo RS485"
+// (terminal dedicado), não os dois ao mesmo tempo; (b) a doc do fabricante
+// está descrevendo outra revisão de placa. De qualquer forma, ligar o
+// módulo de pedal aqui SEM verificar o esquemático físico da sua placa
+// pode causar dois periféricos discutindo o mesmo pino. Confirme no
+// esquemático/serigrafia da placa antes de conectar qualquer fio físico —
+// ver [[waveshare-43-gpio-map]] / ROADMAP.md.
+#define BSP_RS485_TX                (GPIO_NUM_43)
+#define BSP_RS485_RX                (GPIO_NUM_44)
+
 // CH422G output bits
 #define BSP_CH422_TP_RST_BIT        (1U << 1)
 #define BSP_CH422_LCD_BL_BIT        (1U << 2)

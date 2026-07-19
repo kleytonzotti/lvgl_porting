@@ -23,8 +23,6 @@ static volatile uint32_t s_flush_wait_ms     = 0;
 static volatile uint32_t s_flush_slow_count  = 0;
 static volatile uint32_t s_flush_tick_start  = 0;
 static volatile bool     s_flush_in_progress = false;
-static lv_obj_t         *s_fps_label         = NULL;
-static uint32_t          s_fps_last_render_count = 0;
 
 void bsp_touch_register_cb(bsp_touch_cb_t cb)
 {
@@ -82,43 +80,6 @@ static void lvgl_diag_timer_cb(lv_timer_t *timer)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
              (unsigned)stack_free);
     last = now;
-}
-
-static void fps_overlay_timer_cb(lv_timer_t *timer)
-{
-    LV_UNUSED(timer);
-    if (s_fps_label == NULL) {
-        return;
-    }
-
-    uint32_t now = s_render_count;
-    uint32_t fps = now - s_fps_last_render_count;
-    s_fps_last_render_count = now;
-
-    lv_label_set_text_fmt(s_fps_label, "FPS %lu/%d",
-                          (unsigned long)fps, BSP_LVGL_TARGET_FPS);
-    lv_obj_align(s_fps_label, LV_ALIGN_TOP_RIGHT, -6, 4);
-}
-
-static void create_fps_overlay(void)
-{
-    lv_obj_t *layer = lv_layer_top();
-
-    s_fps_label = lv_label_create(layer);
-    lv_label_set_text_fmt(s_fps_label, "FPS --/%d", BSP_LVGL_TARGET_FPS);
-    lv_obj_set_style_text_font(s_fps_label, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(s_fps_label, lv_color_hex(0xD8F7FF), 0);
-    lv_obj_set_style_bg_color(s_fps_label, lv_color_hex(0x061B35), 0);
-    lv_obj_set_style_bg_opa(s_fps_label, LV_OPA_80, 0);
-    lv_obj_set_style_border_color(s_fps_label, lv_color_hex(0x22D8FF), 0);
-    lv_obj_set_style_border_width(s_fps_label, 1, 0);
-    lv_obj_set_style_radius(s_fps_label, 4, 0);
-    lv_obj_set_style_pad_left(s_fps_label, 6, 0);
-    lv_obj_set_style_pad_right(s_fps_label, 6, 0);
-    lv_obj_set_style_pad_top(s_fps_label, 2, 0);
-    lv_obj_set_style_pad_bottom(s_fps_label, 2, 0);
-    lv_obj_clear_flag(s_fps_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(s_fps_label, LV_ALIGN_TOP_RIGHT, -6, 4);
 }
 
 static void apply_fps_limit(lv_display_t *disp)
@@ -292,14 +253,12 @@ esp_err_t bsp_lvgl_init(void)
     // Registra callbacks de diagnostico dentro do mutex LVGL.
     if (bsp_lvgl_lock(-1)) {
         apply_fps_limit(disp);
-        create_fps_overlay();
         lv_display_add_event_cb(disp, on_render_ready_cb,
                                 LV_EVENT_RENDER_READY,      NULL);
         lv_display_add_event_cb(disp, on_flush_wait_start_cb,
                                 LV_EVENT_FLUSH_WAIT_START,  NULL);
         lv_display_add_event_cb(disp, on_flush_wait_finish_cb,
                                 LV_EVENT_FLUSH_WAIT_FINISH, NULL);
-        lv_timer_create(fps_overlay_timer_cb, 1000, NULL);
         lv_timer_create(lvgl_diag_timer_cb, 3000, NULL);
         bsp_lvgl_unlock();
     }

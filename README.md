@@ -2,6 +2,8 @@
 
 Porting do LVGL 9 para o display Waveshare ESP32-S3-Touch-LCD-4.3B (módulo ESP32-S3-N16R8).
 
+> Arquitetura do sistema completo (ECU programável, módulo de pedal, protocolos BLE/UART, hardware de referência): ver [ROADMAP.md](ROADMAP.md).
+
 ## Hardware
 
 - Placa: Waveshare ESP32-S3-Touch-LCD-4.3B

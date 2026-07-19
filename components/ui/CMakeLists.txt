@@ -34,6 +34,9 @@ idf_component_register(
         app_core
         app_can
         app_ble
+        app_ecu
+        app_sim
+        app_dash_profile
         lvgl__lvgl
         esp_common
         assets

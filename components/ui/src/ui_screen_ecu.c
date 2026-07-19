@@ -2,6 +2,10 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
+#include "app_ecu.h"
+
+#include <stdarg.h>
+#include <stdio.h>
 
 static const char *TAG = "UI_ECU";
 
@@ -14,7 +18,23 @@ typedef struct {
     lv_color_t  color;
 } ecu_sensor_t;
 
-static const ecu_sensor_t k_sensors[] = {
+// Indices em k_sensors — usados por update_values() para saber qual label
+// de valor corresponde a qual dado do app_ecu_data_t.
+enum {
+    SENS_RPM = 0,
+    SENS_MAP,
+    SENS_TPS,
+    SENS_AFR,
+    SENS_LAMBDA,
+    SENS_ECT,
+    SENS_IAT,
+    SENS_PRESSAO,   // sem fonte de dado ainda — fica sempre "---"
+    SENS_BATERIA,
+    SENS_ESTADO,
+    SENS_COUNT
+};
+
+static const ecu_sensor_t k_sensors[SENS_COUNT] = {
     { "RPM",      "rpm",  {0} },
     { "MAP",      "kPa",  {0} },
     { "TPS",      "%",    {0} },
@@ -27,12 +47,73 @@ static const ecu_sensor_t k_sensors[] = {
     { "Estado",   "",     {0} },
 };
 
+// ─────────────────────────────────────────────────────
+// Estado da tela (para o timer de atualização)
+// ─────────────────────────────────────────────────────
+static lv_obj_t   *s_lbl_val[SENS_COUNT] = {0};
+static lv_obj_t   *s_lbl_ble             = NULL;
+static lv_timer_t *s_timer               = NULL;
+
+static void set_val_text(int idx, const char *fmt, ...)
+{
+    if (!s_lbl_val[idx]) return;
+    char buf[16];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    lv_label_set_text(s_lbl_val[idx], buf);
+}
+
+// Chamado a cada 300ms pelo s_timer — só lê o snapshot já pronto do
+// app_ecu (mutex + memcpy, rápido) e formata texto. Nenhum I/O aqui.
+static void update_values(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+
+    app_ecu_status_t st;
+    app_ecu_get_status(&st);
+
+    if (s_lbl_ble) {
+        bool connected = (st.state == APP_ECU_STATE_CONNECTED);
+        lv_label_set_text(s_lbl_ble, connected
+            ? LV_SYMBOL_BLUETOOTH "  ECU BLE: CONECTADA"
+            : LV_SYMBOL_BLUETOOTH "  ECU BLE: DESCONECTADA");
+        lv_obj_set_style_text_color(s_lbl_ble, connected ? ZOTTI_GREEN : ZOTTI_RED, 0);
+    }
+    set_val_text(SENS_ESTADO, "%s",
+        st.state == APP_ECU_STATE_CONNECTED  ? "OK" :
+        st.state == APP_ECU_STATE_CONNECTING ? "..." : "---");
+
+    app_ecu_data_t d;
+    app_ecu_get_data(&d);
+    if (!d.valid) return;
+
+    set_val_text(SENS_RPM,    "%u",   (unsigned)d.rpm);
+    set_val_text(SENS_MAP,    "%u",   (unsigned)d.map_kpa);
+    set_val_text(SENS_TPS,    "%u",   (unsigned)d.tps_pct);
+    set_val_text(SENS_LAMBDA, "%.3f", (double)d.lambda);
+    set_val_text(SENS_AFR,    "%.1f", (double)(d.lambda * 14.7f));  // gasolina, estequiometrico=14.7
+    set_val_text(SENS_ECT,    "%d",   (int)d.ect_c);
+    set_val_text(SENS_IAT,    "%d",   (int)d.iat_c);
+    set_val_text(SENS_BATERIA,"%.1f", (double)d.batt_v);
+}
+
+static void screen_delete_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (s_timer) { lv_timer_delete(s_timer); s_timer = NULL; }
+    for (int i = 0; i < SENS_COUNT; i++) s_lbl_val[i] = NULL;
+    s_lbl_ble = NULL;
+}
+
 void ui_screen_ecu_show(void)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(scr, screen_delete_cb, LV_EVENT_DELETE, NULL);
 
     // Header.
     lv_obj_t *header = lv_obj_create(scr);
@@ -67,11 +148,11 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_border_width(status_bar, 0, 0);
     lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lbl_ble = lv_label_create(status_bar);
-    lv_label_set_text(lbl_ble, LV_SYMBOL_BLUETOOTH "  ECU BLE: DESCONECTADA");
-    lv_obj_set_style_text_font(lbl_ble, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(lbl_ble, ZOTTI_RED, 0);
-    lv_obj_align(lbl_ble, LV_ALIGN_LEFT_MID, 15, 0);
+    s_lbl_ble = lv_label_create(status_bar);
+    lv_label_set_text(s_lbl_ble, LV_SYMBOL_BLUETOOTH "  ECU BLE: DESCONECTADA");
+    lv_obj_set_style_text_font(s_lbl_ble, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_lbl_ble, ZOTTI_RED, 0);
+    lv_obj_align(s_lbl_ble, LV_ALIGN_LEFT_MID, 15, 0);
 
     lv_obj_t *lbl_proto = lv_label_create(status_bar);
     lv_label_set_text(lbl_proto, "Comando: WB1 via BLE para ativar");
@@ -124,6 +205,7 @@ void ui_screen_ecu_show(void)
         lv_obj_set_style_text_font(lbl_val, ZOTTI_FONT_LARGE, 0);
         lv_obj_set_style_text_color(lbl_val, ZOTTI_WHITE, 0);
         lv_obj_align(lbl_val, LV_ALIGN_BOTTOM_LEFT, 14, -8);
+        s_lbl_val[i] = lbl_val;
 
         lv_obj_t *lbl_unit = lv_label_create(card);
         lv_label_set_text(lbl_unit, k_sensors[i].unit);
@@ -131,6 +213,9 @@ void ui_screen_ecu_show(void)
         lv_obj_set_style_text_color(lbl_unit, ZOTTI_GRAY, 0);
         lv_obj_align(lbl_unit, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
     }
+
+    s_timer = lv_timer_create(update_values, 300, NULL);
+    update_values(NULL);   // primeiro frame já com o estado atual, sem esperar 300ms
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
     ESP_LOGI(TAG, "ECU criado");

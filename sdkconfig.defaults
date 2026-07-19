@@ -22,3 +22,10 @@ CONFIG_BT_NIMBLE_ENABLED=y
 # Default (INFO) faz o host logar cada advertising/scan report continuamente
 # no monitor serial; WARNING deixa so erros/avisos.
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+
+# Partição "factory" de 1MB (single-app padrão) ficou pequena depois dos
+# componentes novos (app_ecu/app_pedal_link/app_sim/app_dash_profile) —
+# binário passou de 1MB por ~4KB. "Large" usa 1500K, com folga (flash tem
+# 16MB, sobra espaço de sobra). Ver README.md sobre apagar o sdkconfig e
+# rodar Reconfigure Project pra isso realmente ser aplicado.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

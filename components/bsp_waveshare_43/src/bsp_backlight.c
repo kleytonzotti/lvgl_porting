@@ -1,10 +1,20 @@
 #include "bsp_waveshare_43.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "BSP_BL";
 
-static uint8_t s_ch422_state = BSP_CH422_TP_RST_BIT | BSP_CH422_SD_CS_BIT | (1U << 3);
+static uint8_t          s_ch422_state = BSP_CH422_TP_RST_BIT | BSP_CH422_SD_CS_BIT | (1U << 3);
+static SemaphoreHandle_t s_ch422_lock;
+
+static void ensure_ch422_lock(void)
+{
+    if (!s_ch422_lock) {
+        s_ch422_lock = xSemaphoreCreateMutex();
+    }
+}
 
 static esp_err_t bsp_ch422_write(uint8_t value)
 {
@@ -23,10 +33,17 @@ static esp_err_t bsp_ch422_write(uint8_t value)
     return err;
 }
 
+// Protegido por mutex: SD/CAN/touch/backlight compartilham o mesmo byte de
+// estado do CH422G (leitura-modificacao-escrita) — sem isso, duas chamadas
+// concorrentes podem perder o bit uma da outra.
 esp_err_t bsp_ch422_update(uint8_t mask, uint8_t value)
 {
+    ensure_ch422_lock();
+    xSemaphoreTake(s_ch422_lock, portMAX_DELAY);
     uint8_t next = (s_ch422_state & (uint8_t)~mask) | (value & mask);
-    return bsp_ch422_write(next);
+    esp_err_t err = bsp_ch422_write(next);
+    xSemaphoreGive(s_ch422_lock);
+    return err;
 }
 
 esp_err_t bsp_backlight_set(bool enable)

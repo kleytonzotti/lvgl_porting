@@ -154,14 +154,6 @@ static void ble_row_click_cb(lv_event_t *e)
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
-static void brightness_cb(lv_event_t *e)
-{
-    lv_obj_t *slider = lv_event_get_target(e);
-    int32_t val = lv_slider_get_value(slider);
-    // TODO: chamar bsp_backlight_set_level(val).
-    ESP_LOGI("CONFIG", "Brilho: %ld", (long)val);
-}
-
 static lv_obj_t *add_section_label(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *lbl = lv_label_create(parent);
@@ -236,18 +228,6 @@ void ui_screen_config_show(void)
 
     // Secao: Display.
     add_section_label(scroll, "  DISPLAY");
-
-    // Brilho
-    lv_obj_t *row_brilho = add_row(scroll, "Brilho");
-    lv_obj_t *slider = lv_slider_create(row_brilho);
-    lv_obj_set_size(slider, 280, 6);
-    lv_obj_align(slider, LV_ALIGN_RIGHT_MID, -10, 0);
-    lv_slider_set_range(slider, 10, 100);
-    lv_slider_set_value(slider, 80, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(slider, ZOTTI_GRAY_DARK, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, ZOTTI_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, ZOTTI_WHITE, LV_PART_KNOB);
-    lv_obj_add_event_cb(slider, brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Tema (dropdown)
     lv_obj_t *row_tema = add_row(scroll, "Tema");
