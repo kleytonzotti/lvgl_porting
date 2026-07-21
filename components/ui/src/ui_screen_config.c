@@ -3,6 +3,8 @@
 #include "zotti_fonts.h"
 #include "esp_log.h"
 #include "app_ble.h"
+#include "app_dash_profile.h"
+#include "app_dash_minmax.h"
 
 static const char *TAG = "UI_CONFIG";
 
@@ -154,6 +156,99 @@ static void ble_row_click_cb(lv_event_t *e)
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
+static void tema_dd_cb(lv_event_t *e)
+{
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);
+    // A troca só aparece em telas abertas depois disso — ver zotti_theme.h.
+    zotti_theme_set((zotti_theme_id_t)sel);
+}
+
+// ─────────────────────────────────────────────────────
+// Estilo / Modelo / Corte do dashboard — configuracao unica e global (nao
+// existe mais tela de "Perfis" com lista/editor/Salvar dentro do
+// dashboard; aplica na hora e persiste sozinho, igual o Tema acima).
+// Sempre le/grava o perfil "ativo" (indice de app_dash_profile_get_active_index(),
+// ou 0 se nenhum foi marcado ainda — mesmo fallback que ui_screen_dashboard
+// já usava).
+// ─────────────────────────────────────────────────────
+
+static lv_obj_t *s_lbl_corte;
+
+static uint32_t active_dash_profile_index(void)
+{
+    int32_t idx = app_dash_profile_get_active_index();
+    return (idx < 0) ? 0 : (uint32_t)idx;
+}
+
+static bool get_active_dash_profile(app_dash_profile_t *out)
+{
+    app_dash_profile_init();
+    return app_dash_profile_get(active_dash_profile_index(), out);
+}
+
+static void save_active_dash_profile(const app_dash_profile_t *p)
+{
+    app_dash_profile_save(active_dash_profile_index(), p);
+}
+
+static void refresh_corte_label(void)
+{
+    if (!s_lbl_corte) return;
+    app_dash_profile_t p;
+    if (get_active_dash_profile(&p)) {
+        lv_label_set_text_fmt(s_lbl_corte, "%u rpm", (unsigned)p.redline_rpm);
+    }
+}
+
+static void estilo_dd_cb(lv_event_t *e)
+{
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);   // 0=Sport, 1=Classico
+
+    app_dash_profile_t p;
+    if (!get_active_dash_profile(&p)) return;
+    p.gauge_style = (sel == 1) ? APP_DASH_GAUGE_ANALOG : APP_DASH_GAUGE_DIGITAL;
+    save_active_dash_profile(&p);
+}
+
+static void modelo_dd_cb(lv_event_t *e)
+{
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);   // mesma ordem de app_dash_layout_t
+
+    app_dash_profile_t p;
+    if (!get_active_dash_profile(&p)) return;
+    p.layout = (app_dash_layout_t)sel;
+    save_active_dash_profile(&p);
+}
+
+static void corte_dec_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    app_dash_profile_t p;
+    if (!get_active_dash_profile(&p)) return;
+    if (p.redline_rpm > 3250) p.redline_rpm -= 250;
+    save_active_dash_profile(&p);
+    refresh_corte_label();
+}
+
+static void corte_inc_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    app_dash_profile_t p;
+    if (!get_active_dash_profile(&p)) return;
+    if (p.redline_rpm < 12000) p.redline_rpm += 250;
+    save_active_dash_profile(&p);
+    refresh_corte_label();
+}
+
+static void reset_minmax_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    app_dash_minmax_reset();
+}
+
 static lv_obj_t *add_section_label(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *lbl = lv_label_create(parent);
@@ -229,15 +324,88 @@ void ui_screen_config_show(void)
     // Secao: Display.
     add_section_label(scroll, "  DISPLAY");
 
-    // Tema (dropdown)
+    // Tema (dropdown) — TEMA1 (original), TEMA2 (esportivo), TEMA3 (classico).
     lv_obj_t *row_tema = add_row(scroll, "Tema");
     lv_obj_t *dd_tema = lv_dropdown_create(row_tema);
-    lv_dropdown_set_options(dd_tema, "ZOTTI DARK\nZOTTI BLUE\nZOTTI LIGHT");
+    lv_dropdown_set_options(dd_tema, "TEMA1\nTEMA2\nTEMA3");
+    lv_dropdown_set_selected(dd_tema, (uint16_t)zotti_theme_get());
     lv_obj_set_size(dd_tema, 200, 34);
     lv_obj_align(dd_tema, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_bg_color(dd_tema, ZOTTI_BG_HEADER, 0);
     lv_obj_set_style_text_color(dd_tema, ZOTTI_WHITE, 0);
     lv_obj_set_style_text_font(dd_tema, ZOTTI_FONT_TINY, 0);
+    lv_obj_add_event_cb(dd_tema, tema_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Secao: Dashboard — Estilo, Modelo e Corte do mostrador (antes ficava
+    // numa tela de "Perfis" separada, aberta de dentro do dashboard; agora
+    // e configuracao unica aqui, aplicando na hora, sem botao Salvar).
+    add_section_label(scroll, "  DASHBOARD");
+
+    app_dash_profile_t dash_p;
+    get_active_dash_profile(&dash_p);
+
+    // Estilo (Sport / Classico).
+    lv_obj_t *row_estilo = add_row(scroll, "Estilo do mostrador");
+    lv_obj_t *dd_estilo = lv_dropdown_create(row_estilo);
+    lv_dropdown_set_options(dd_estilo, "Sport\nClassico");
+    lv_dropdown_set_selected(dd_estilo, (uint16_t)dash_p.gauge_style);
+    lv_obj_set_size(dd_estilo, 200, 34);
+    lv_obj_align(dd_estilo, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(dd_estilo, ZOTTI_BG_HEADER, 0);
+    lv_obj_set_style_text_color(dd_estilo, ZOTTI_WHITE, 0);
+    lv_obj_set_style_text_font(dd_estilo, ZOTTI_FONT_TINY, 0);
+    lv_obj_add_event_cb(dd_estilo, estilo_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Modelo (Classico / Race / Grid / Duplo) — mesma ordem de app_dash_layout_t.
+    lv_obj_t *row_modelo = add_row(scroll, "Modelo da tela");
+    lv_obj_t *dd_modelo = lv_dropdown_create(row_modelo);
+    lv_dropdown_set_options(dd_modelo, "Classico\nRace\nGrid\nDuplo");
+    lv_dropdown_set_selected(dd_modelo, (uint16_t)dash_p.layout);
+    lv_obj_set_size(dd_modelo, 200, 34);
+    lv_obj_align(dd_modelo, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(dd_modelo, ZOTTI_BG_HEADER, 0);
+    lv_obj_set_style_text_color(dd_modelo, ZOTTI_WHITE, 0);
+    lv_obj_set_style_text_font(dd_modelo, ZOTTI_FONT_TINY, 0);
+    lv_obj_add_event_cb(dd_modelo, modelo_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Corte (RPM) — stepper -/+.
+    lv_obj_t *row_corte = add_row(scroll, "Corte (RPM)");
+    lv_obj_t *btn_corte_dec = lv_btn_create(row_corte);
+    lv_obj_set_size(btn_corte_dec, 40, 34);
+    lv_obj_align(btn_corte_dec, LV_ALIGN_RIGHT_MID, -170, 0);
+    lv_obj_set_style_bg_color(btn_corte_dec, ZOTTI_BG_HEADER, 0);
+    lv_obj_add_event_cb(btn_corte_dec, corte_dec_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_corte_dec = lv_label_create(btn_corte_dec);
+    lv_label_set_text(lbl_corte_dec, "-");
+    lv_obj_center(lbl_corte_dec);
+
+    s_lbl_corte = lv_label_create(row_corte);
+    lv_obj_set_style_text_font(s_lbl_corte, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_lbl_corte, ZOTTI_WHITE, 0);
+    lv_obj_align(s_lbl_corte, LV_ALIGN_RIGHT_MID, -75, 0);
+    refresh_corte_label();
+
+    lv_obj_t *btn_corte_inc = lv_btn_create(row_corte);
+    lv_obj_set_size(btn_corte_inc, 40, 34);
+    lv_obj_align(btn_corte_inc, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(btn_corte_inc, ZOTTI_BG_HEADER, 0);
+    lv_obj_add_event_cb(btn_corte_inc, corte_inc_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_corte_inc = lv_label_create(btn_corte_inc);
+    lv_label_set_text(lbl_corte_inc, "+");
+    lv_obj_center(lbl_corte_inc);
+
+    // Zerar minimo/maximo salvo dos sensores.
+    lv_obj_t *row_minmax = add_row(scroll, LV_SYMBOL_REFRESH "  Minimo/Maximo dos sensores");
+    lv_obj_t *btn_minmax = lv_btn_create(row_minmax);
+    lv_obj_set_size(btn_minmax, 150, 34);
+    lv_obj_align(btn_minmax, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(btn_minmax, lv_color_hex(0x3A2000), 0);
+    lv_obj_set_style_radius(btn_minmax, 4, 0);
+    lv_obj_add_event_cb(btn_minmax, reset_minmax_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_minmax = lv_label_create(btn_minmax);
+    lv_label_set_text(lbl_minmax, "Zerar");
+    lv_obj_set_style_text_font(lbl_minmax, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_minmax);
 
     // Secao: Comunicacao.
     add_section_label(scroll, "  COMUNICACAO");

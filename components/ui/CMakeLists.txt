@@ -4,6 +4,7 @@ idf_component_register(
         "src/ui.c"
         "src/ui_splash.c"
         "src/ui_menu.c"
+        "src/zotti_theme.c"
 
         # Telas principais
         "src/ui_screen_dashboard.c"
@@ -39,5 +40,6 @@ idf_component_register(
         app_dash_profile
         lvgl__lvgl
         esp_common
+        nvs_flash
         assets
 )

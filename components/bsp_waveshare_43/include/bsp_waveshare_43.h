@@ -78,10 +78,25 @@ extern "C" {
 #define BSP_CH422_SD_CS_BIT         (1U << 4)  // active low
 #define BSP_CH422_CAN_SEL_BIT       (1U << 5)  // high selects CAN
 
-// LCD bounce buffer
-// Disabled in direct/avoid_tearing mode: VSYNC must mean end-of-frame, not
-// end-of-bounce chunk.
-#define BSP_LCD_BOUNCE_LINES        (0)
+// LCD bounce buffer — buffer pequeno em SRAM interna que o proprio driver
+// esp_lcd_rgb_panel usa pra realimentar a FIFO de pixel do LCD em tempo
+// real direto da PSRAM. E independente do avoid_tearing/direct_mode do
+// esp_lvgl_port (bsp_lvgl_port.c) — aquele resolve "em qual framebuffer o
+// LVGL pode desenhar sem correr com o scanout"; este resolve "o que
+// acontece se o barramento PSRAM atrasar um instante durante o scanout".
+// Estava desligado (0) achando que os dois mecanismos conflitavam — nao
+// conflitam, sao ortogonais. Sem bounce buffer + framebuffer em PSRAM, uma
+// soneca do barramento PSRAM (reconstruir a tela inteira faz bastante heap
+// churn; CAN/SD/BLE tambem usam DMA) pode fazer a FIFO de pixel estourar e
+// a imagem desalinhar horizontalmente NO MEIO do frame — o conteudo visual
+// desliza pro lado mas o touch (I2C separado, GT911) continua certo, porque
+// so a saida de video desincronizou, nao as coordenadas. Usuario confirmou
+// que o embaralhamento acontece desde o inicio, em TODAS as telas, bem na
+// hora de acessar/trocar de tela — exatamente o pico de carga (LVGL
+// redesenha os 800x480 inteiros de uma vez numa troca de tela, disputando
+// o barramento PSRAM com o resto do sistema). 10 linhas nao foi suficiente;
+// subindo pra 20.
+#define BSP_LCD_BOUNCE_LINES        (20)
 #define BSP_LCD_BOUNCE_BUFFER_PX    (BSP_LCD_H_RES * BSP_LCD_BOUNCE_LINES)
 
 // LVGL task

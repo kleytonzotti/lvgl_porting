@@ -6,6 +6,7 @@
 #include "app_pedal_link.h"
 #include "app_sim.h"
 #include "app_dash_profile.h"
+#include "app_dash_minmax.h"
 
 void app_core_init(void)
 {
@@ -24,4 +25,5 @@ void app_core_init(void)
     // app_pedal_link_init();
     app_sim_init();
     app_dash_profile_init();
+    app_dash_minmax_init();
 }

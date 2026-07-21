@@ -9,8 +9,20 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
-CONFIG_SPIRAM_RODATA=y
+
+# FETCH_INSTRUCTIONS/RODATA (ligados no demo oficial da Waveshare) fazem
+# codigo e constantes rodarem direto da PSRAM — competindo pelo MESMO
+# barramento que o framebuffer do LCD usa o tempo todo. Isso bate com o
+# sintoma reportado (tela embaralha/balanca TODA VEZ que troca de tela,
+# nao so ocasionalmente): montar uma tela nova executa muito codigo ainda
+# fora do cache, e cada instrucao buscada na PSRAM disputa com o DMA de
+# video bem na hora de pico. Desligando para testar. Se o build falhar
+# com overflow de IRAM/DROM, essas flags eram necessarias por causa do
+# tamanho do binario e precisamos de outra saida (reduzir codigo em IRAM
+# ou aceitar o tradeoff); se o build passar, teste se o embaralhamento
+# sumiu.
+# CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+# CONFIG_SPIRAM_RODATA=y
 
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
@@ -29,3 +41,10 @@ CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 # 16MB, sobra espaço de sobra). Ver README.md sobre apagar o sdkconfig e
 # rodar Reconfigure Project pra isso realmente ser aplicado.
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Sem isso, o sprintf embutido do LVGL (CONFIG_LV_USE_BUILTIN_SPRINTF) NÃO
+# processa "%f" — qualquer lv_label_set_text_fmt com número decimal (bateria,
+# AFR, lambda, G-force, mínimo/máximo) imprime lixo tipo "fV" em vez do
+# número. Faltou desde o início do porting; só apareceu agora que o
+# dashboard passou a mostrar mais números decimais.
+CONFIG_LV_USE_FLOAT=y

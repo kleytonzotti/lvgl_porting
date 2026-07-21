@@ -29,10 +29,14 @@ typedef enum {
 //            progressiva + G-meter (usa accel_g do app_ecu/app_sim).
 //   GRID:    estilo Injepro — numérico central + ponteiro analógico +
 //            grade de mostradores menores com mínimo/máximo salvo.
+//   DUPLO:   dois mostradores redondos lado a lado (RPM + velocidade) —
+//            o arranjo clássico de painel automotivo (tacômetro + velocímetro).
 typedef enum {
     APP_DASH_LAYOUT_CLASSIC = 0,
     APP_DASH_LAYOUT_RACE    = 1,
     APP_DASH_LAYOUT_GRID    = 2,
+    APP_DASH_LAYOUT_DUPLO   = 3,
+    APP_DASH_LAYOUT_COUNT
 } app_dash_layout_t;
 
 typedef struct {
