@@ -223,6 +223,17 @@ static void modelo_dd_cb(lv_event_t *e)
     save_active_dash_profile(&p);
 }
 
+static void cor_dd_cb(lv_event_t *e)
+{
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);   // mesma ordem de ui_dash_accent_*
+
+    app_dash_profile_t p;
+    if (!get_active_dash_profile(&p)) return;
+    p.color_theme = (uint8_t)sel;
+    save_active_dash_profile(&p);
+}
+
 static void corte_dec_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
@@ -367,6 +378,18 @@ void ui_screen_config_show(void)
     lv_obj_set_style_text_color(dd_modelo, ZOTTI_WHITE, 0);
     lv_obj_set_style_text_font(dd_modelo, ZOTTI_FONT_TINY, 0);
     lv_obj_add_event_cb(dd_modelo, modelo_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Cor do acento do RPM (so aparece no layout Grid, ver ui_dash_accent_color).
+    lv_obj_t *row_cor = add_row(scroll, "Cor do acento (RPM)");
+    lv_obj_t *dd_cor = lv_dropdown_create(row_cor);
+    lv_dropdown_set_options(dd_cor, "Azul\nVerde\nAmarelo\nVermelho\nRoxo\nBranco");
+    lv_dropdown_set_selected(dd_cor, (uint16_t)(dash_p.color_theme % UI_DASH_ACCENT_COUNT));
+    lv_obj_set_size(dd_cor, 200, 34);
+    lv_obj_align(dd_cor, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(dd_cor, ZOTTI_BG_HEADER, 0);
+    lv_obj_set_style_text_color(dd_cor, ZOTTI_WHITE, 0);
+    lv_obj_set_style_text_font(dd_cor, ZOTTI_FONT_TINY, 0);
+    lv_obj_add_event_cb(dd_cor, cor_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Corte (RPM) — stepper -/+.
     lv_obj_t *row_corte = add_row(scroll, "Corte (RPM)");

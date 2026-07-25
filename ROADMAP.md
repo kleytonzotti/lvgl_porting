@@ -43,14 +43,19 @@ não um acidente de arquitetura.
 | `components/app_sim/` **(novo)** | Modo demo/simulação — gera RPM/velocidade/aceleração/sondas plausíveis, ciclo com rajadas perto do corte | Funcionando, testado (Unity) |
 | `components/app_dash_profile/` **(novo)** | Perfis salvos do dashboard em NVS (estilo, redline, cor) | Funcionando |
 | `ui_screen_ecu.c` | Tela "MONITOR ECU BLE" | Lê dados reais de `app_ecu` a cada 300ms (antes só mostrava "---") |
-| `ui_screen_dashboard.c` | Dashboard | Agora tem: gauge digital/analógico alternável, vários perfis salvos (NVS), efeito de "perto do corte", modo Demo com dados simulados — ver §10 |
+| `ui_screen_dashboard.c` | Dashboard | 4 modelos de tela (Classic/Race/Grid/Duplo), config única persistida em NVS (editada em Configurações), efeito de "perto do corte", modo Demo, cor do acento do RPM (Grid) — ver §10 |
+| `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
+| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_can_obd2_set_active` — ver §6 |
 | `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
 
-### Achado durante a revisão: código morto
-`ui_screen_calculos.c` / `ui_tabs.c` (a aba "Cálculos" e o sistema de tabs
-legado) **não são chamados por nenhum caminho ativo da tela** — `ui_init()`
-vai direto para `ui_splash_show()` → menu → telas novas. Deixei como está;
-avisa se quiser reaproveitar ou apagar.
+### Código morto removido
+`ui_screen_calculos.c`, `ui_tabs.c`, `ui_screen_animacao.c`,
+`ui_screen_entradas.c`, `ui_screen_saidas.c`, `ui_screen_botoes.c` e a função
+legada `ui_splash_create()` não eram chamados por nenhum caminho ativo da
+tela (`ui_init()` vai direto para `ui_splash_show()` → menu → telas novas) —
+apagados. `ui_screen_touch_create()` foi mantida: é usada de verdade por
+`ui_screen_sistema.c`, só também era chamada (redundantemente) pelo
+`ui_tabs.c` morto.
 
 ## 3. Por que a SD travava — CORRIGIDO
 
@@ -153,8 +158,18 @@ em `app_can.c`). Precisa trocar `TWAI_MODE_LISTEN_ONLY` → `TWAI_MODE_NORMAL`
 | 0x11 | TPS | `A*100/255` % |
 | 0x42 | Tensão bateria | `((A*256)+B)/1000` V |
 
-Isso é **independente** da ECU programável — seria uma segunda fonte de
-dados (o carro de fábrica), não conflita com o app_ecu.
+Isso é **independente** da ECU programável — é uma segunda fonte de dados (o
+carro de fábrica), não conflita com o app_ecu.
+
+**Implementado**: `app_can_obd2_set_active()`/`app_can_obd2_request_pid()`
+em `components/app_can/` — reinstala o driver TWAI em `TWAI_MODE_NORMAL`
+(transmite) quando ligado, volta pro `TWAI_MODE_LISTEN_ONLY` padrão quando
+desligado. A aba "Decoder" da tela CAN (`ui_screen_can.c`) tem o botão
+liga/desliga e mostra os 7 PIDs da tabela acima, pedidos em round robin
+(um a cada 300ms) e decodificados da resposta em `0x7E8`. **Desligado por
+padrão** — precisa apertar "Ativar OBD2" explicitamente; até lá o painel
+continua só escutando, igual ao sniffer. Não testado em hardware real
+ainda (precisa do Vectra com ignição ligada respondendo Mode 01).
 
 ## 7. Hardware da ECU programável — pontos de partida (pesquisa)
 
@@ -190,25 +205,44 @@ direto em `claude.ai/code`, mas aí sem acesso ao seu filesystem local.
 
 ## 10. Dashboard personalizado + modo Demo
 
-`ui_screen_dashboard.c` ganhou:
-- **Digital vs Analógico**: alternável (botão dentro do modal "Perfis"). Digital
-  = número grande (como já era). Analógico = anel mais fino + 6 marcadores de
-  graduação ao redor + o "knob" do arco funcionando como ponteiro (o LVGL já
-  posiciona sozinho na ponta do valor — sem precisar de rotação manual de
-  agulha, que seria mais frágil de acertar sem poder testar visualmente).
-- **Vários perfis salvos** (`components/app_dash_profile/`, NVS, até
-  `APP_DASH_PROFILE_MAX`=8): nome, estilo, RPM de corte, tema de cor (índice —
-  a paleta em si ainda não está implementada, só o campo). Botão "Perfis" no
-  cabeçalho abre lista (Usar/Apagar) + editor do perfil ativo (estilo,
-  corte -/+, "Salvar como novo").
-- **Efeito de corte**: quando RPM ≥ 90% do redline do perfil ativo, o
-  arco/número pisca entre branco e vermelho (`lv_anim`, com histerese em 85%
-  pra não ficar oscilando na borda).
-- **Animação suave do ponteiro**: o arco anima entre o valor antigo e o novo
-  (180ms) em vez de saltar — `animate_arc_to()`.
-- Continua sem popular: `AFR`/`ECT`/`IAT` agora aparecem (antes 3 cards
-  estavam comentados) — todos vêm de `app_ecu`/`app_sim`, nenhum cálculo novo
-  de unidade foi necessário além do lambda→AFR (`lambda*14.7`, já existia).
+`ui_screen_dashboard.c` ganhou (ao longo de duas rodadas — a rodada de
+2026-07-21 já tinha o essencial, uma rodada depois adicionou a cor por
+perfil em cima disso):
+- **4 modelos de tela** (`app_dash_layout_t`: Classic/Race/Grid/Duplo), cada
+  um com seu próprio builder (`build_classic_layout`/`build_race_layout`/
+  `build_grid_layout`/`build_twin_layout`), escolhidos por
+  `switch (s_active_profile.layout)` em `ui_screen_dashboard_show()`. Grid é
+  o único que usa `lv_arc` (com "knob" fazendo de ponteiro); os outros usam
+  mostradores `lv_scale` de verdade (`build_dial()`) com ponteiro-linha
+  (`lv_scale_set_line_needle_value`) — visual de tacômetro/velocímetro
+  clássico.
+- **Configuração única e global** (não existe mais tela/modal de "Perfis"
+  com lista + "Salvar como novo" dentro do dashboard): Estilo, Modelo de
+  tela, Corte (RPM) e Cor do acento se editam na tela de Configurações
+  (`ui_screen_config.c`, seção "DASHBOARD"), aplicando na hora e persistindo
+  sozinho — sempre lê/grava o perfil "ativo" de `app_dash_profile`
+  (`APP_DASH_PROFILE_MAX`=8 continua existindo na API, mas a UI só expõe um
+  perfil por vez).
+- **Cor do acento do RPM** (`ui_dash_accent_color()`/`ui_dash_accent_name()`
+  em `ui_screen_dashboard.c`, declaradas em `ui.h` pra tela de Config poder
+  montar o dropdown "Cor"): 6 cores fixas (Azul/Verde/Amarelo/Vermelho/Roxo/
+  Branco). Só tem efeito visível no layout **Grid** — é o único com o `lv_arc`
+  colorível; os outros layouts usam `lv_scale`, que não tem um indicador
+  separado pra pintar.
+- Separado disso, `zotti_theme.c`/`.h` implementa um **tema global de app**
+  (TEMA1/2/3 — azul original / esportivo preto-vermelho / clássico âmbar),
+  trocável no dropdown "Tema" da tela de Config, persistido em NVS,
+  aplicando em `ZOTTI_BG`/`ZOTTI_ACCENT`/etc via variáveis globais (as telas
+  não precisaram mudar — só passaram a ler uma variável em vez de uma
+  constante). Independente da cor do acento do RPM acima — um é o esquema de
+  cor de toda a UI, o outro é só o destaque do mostrador de RPM no Grid.
+- **Efeito de corte**: quando RPM ≥ 90% do redline do perfil ativo, o número
+  do RPM (e o arco, no Grid) piscam entre branco e vermelho (`lv_anim`, com
+  histerese em 85% pra não ficar oscilando na borda).
+- **Animação suave do ponteiro**: o arco (Grid) anima entre o valor antigo e
+  o novo (180ms) em vez de saltar — `animate_arc_to()`.
+- Cartões de sensor hoje mostram TPS/ECT/BATERIA (AFR/IAT saíram — decisão
+  já tomada antes desta sessão, não mexi nisso).
 
 **Modo Demo** (`components/app_sim/`, completamente separado de
 `app_ecu`/`app_can` de propósito): botão "Demo" no cabeçalho do dashboard liga
@@ -254,27 +288,30 @@ display — ver skill `verify`/`run` pra isso).
 
 ## 12. Não coberto nesta rodada (ainda pendente, não esquecido)
 
-- Tela de controle do módulo de pedal (escolher modo Economia/Normal/Sport) —
-  `app_pedal_link` já expõe tudo, só falta a tela.
 - Telas com stub/gap conhecidos e não tocados: `app_inputs.c`/`app_outputs.c`
-  (placeholders), TODOs em `ui_screen_scanner.c`/`ui_screen_config.c`.
-- Paleta de cor por perfil (`color_theme` já existe no struct, mas nada lê
-  esse campo pra aplicar cor ainda).
-- Nomeação customizada de perfil (hoje é automática: "Perfil N") — precisaria
-  de um teclado LVGL (`lv_keyboard`), deixado de fora por risco/tempo.
+  (placeholders), scanner ELM327 via BLE em `ui_screen_scanner.c` (protocolo
+  não definido — diferente do OBD2 direto sobre CAN do §6, que já foi
+  implementado), TODOs em `ui_screen_config.c`.
+- Aba "Gateway" da tela CAN (`ui_screen_can.c`) continua placeholder —
+  fora do escopo do §6, roadmap não detalha o que ela deveria fazer.
+- `app_dash_profile` ainda suporta múltiplos perfis por índice na API
+  (`APP_DASH_PROFILE_MAX`=8), mas desde a config única (§10) nenhuma tela
+  cria perfil novo — só edita o ativo. Se algum dia isso voltar a fazer
+  sentido (ex: perfil por piloto), a UI pra criar/nomear um novo perfil
+  precisaria ser reconstruída (foi removida junto com o modal antigo).
 
 ## 9. Próximos passos (em ordem sugerida)
 
 1. **Confirmar a pendência de pino do §5** antes de ligar qualquer fio físico
-   no módulo de pedal — bloqueia fisicamente o resto do módulo de pedal.
+   no módulo de pedal — bloqueia fisicamente o resto do módulo de pedal (e
+   com isso, testar `ui_screen_pedal.c` com o link de verdade).
 2. Decidir e implementar o GATT client BLE em `app_ble.c`/`app_ecu.c` assim
    que o firmware da ECU definir o UUID do serviço/characteristic (§4).
 3. Retestar em hardware se o travamento do SD (§3) foi realmente resolvido.
-4. Projetar o hardware do módulo de pedal (schematic + PCB) com os chips
+4. Testar o OBD2 ativo (§6) num carro de verdade — implementado mas nunca
+   rodou contra um Vectra respondendo Mode 01 de fato.
+5. Projetar o hardware do módulo de pedal (schematic + PCB) com os chips
    automotivos de referência (§7) — H-bridge DRV8873-Q1 primeiro, por ser
    reaproveitável.
-5. Adicionar tela de controle do módulo de pedal (§12).
-6. Decidir se `ui_screen_calculos.c`/`ui_tabs.c` (código morto, §2) é
-   reaproveitado ou removido.
-7. Opcional: OBD2 ativo sobre o CAN do Vectra (§6), como segunda fonte de
-   telemetria independente da ECU programável.
+6. Opcional: scanner ELM327 via BLE (§12) — precisa definir o protocolo do
+   zero antes, diferente do OBD2 direto sobre CAN que já foi implementado.

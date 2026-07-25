@@ -25,6 +25,7 @@ static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_can_sh
 static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalogger_show); }
 static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config_show); }
 static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
+static void cb_pedal(lv_event_t *e)      { LV_UNUSED(e); ui_nav(ui_screen_pedal_show); }
 static void cb_secret_sniffer(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_can_sniffer_show); }
 
 static void open_sd_browser_from_menu(void)  { ui_screen_sd_browser_show(ui_menu_show); }
@@ -129,7 +130,8 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Arquivos SD",  cb_sd_files);
     create_menu_btn(grid, LV_SYMBOL_EDIT,       "Configuracoes", cb_config);
     create_menu_btn(grid, LV_SYMBOL_HOME,       "Sistema",      cb_sistema);
+    create_menu_btn(grid, LV_SYMBOL_SHUFFLE,    "Pedal",        cb_pedal);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-    ESP_LOGI(TAG, "Menu principal exibido - 8 botoes disponiveis");
+    ESP_LOGI(TAG, "Menu principal exibido - 9 botoes disponiveis");
 }

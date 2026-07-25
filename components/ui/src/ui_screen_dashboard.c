@@ -69,6 +69,44 @@ static app_dash_profile_t s_active_profile;
 static int32_t             s_active_index = 0;
 
 // ─────────────────────────────────────────────────────
+// Paleta de cor do acento do RPM por perfil (ROADMAP.md §12) — o campo
+// color_theme já existia em app_dash_profile_t, mas nada lia ele pra
+// aplicar cor ainda. Afeta só o arco do RPM (existe apenas no layout
+// Grid — ver build_grid_layout); os outros layouts usam o mostrador
+// lv_scale (s_dial_rpm), que não tem indicador colorível separado.
+// Funções expostas (ver ui.h) porque a tela de Config também precisa
+// delas pra montar o dropdown "Cor".
+// ─────────────────────────────────────────────────────
+
+static const char *k_accent_names[UI_DASH_ACCENT_COUNT] = {
+    "Azul", "Verde", "Amarelo", "Vermelho", "Roxo", "Branco",
+};
+
+lv_color_t ui_dash_accent_color(uint8_t idx)
+{
+    switch (idx % UI_DASH_ACCENT_COUNT) {
+    case 0:  return ZOTTI_ACCENT;
+    case 1:  return ZOTTI_GREEN;
+    case 2:  return ZOTTI_YELLOW;
+    case 3:  return ZOTTI_RED;
+    case 4:  return lv_color_hex(0xB266FF);
+    default: return ZOTTI_WHITE;
+    }
+}
+
+const char *ui_dash_accent_name(uint8_t idx)
+{
+    return k_accent_names[idx % UI_DASH_ACCENT_COUNT];
+}
+
+static void apply_theme_color(void)
+{
+    if (s_arc_rpm) {
+        lv_obj_set_style_arc_color(s_arc_rpm, ui_dash_accent_color(s_active_profile.color_theme), LV_PART_INDICATOR);
+    }
+}
+
+// ─────────────────────────────────────────────────────
 // Efeito de "perto do corte" — pisca o numero (e, no layout Grid, o arco)
 // entre a cor normal e vermelho enquanto o RPM estiver acima de 90% do
 // redline do perfil ativo. A animacao usa s_lbl_rpm como var porque esse
@@ -105,7 +143,7 @@ static void redline_stop(void)
 {
     if (!s_redline_flash) return;
     s_redline_flash = false;
-    if (s_arc_rpm)  lv_obj_set_style_arc_color(s_arc_rpm, ZOTTI_ACCENT, LV_PART_INDICATOR);
+    if (s_arc_rpm)  lv_obj_set_style_arc_color(s_arc_rpm, ui_dash_accent_color(s_active_profile.color_theme), LV_PART_INDICATOR);
     if (s_lbl_rpm) {
         lv_anim_delete(s_lbl_rpm, redline_anim_exec_cb);
         lv_obj_set_style_text_color(s_lbl_rpm, ZOTTI_WHITE, 0);
@@ -1028,6 +1066,7 @@ void ui_screen_dashboard_show(void)
         build_classic_layout(scr);
         break;
     }
+    apply_theme_color();
 
     // Timer de atualizacao — 200ms, mesma cadencia das outras telas com dado ao vivo.
     s_timer = lv_timer_create(update_timer_cb, 200, NULL);

@@ -16,15 +16,8 @@ idf_component_register(
         "src/ui_screen_datalogger.c"
         "src/ui_screen_config.c"
         "src/ui_screen_sistema.c"
-
-        # Legado (mantidos para compatibilidade)
-        "src/ui_tabs.c"
-        "src/ui_screen_animacao.c"
-        "src/ui_screen_entradas.c"
-        "src/ui_screen_saidas.c"
-        "src/ui_screen_calculos.c"
-        "src/ui_screen_botoes.c"
         "src/ui_screen_touch.c"
+        "src/ui_screen_pedal.c"
 
     INCLUDE_DIRS
         "include"
@@ -38,6 +31,7 @@ idf_component_register(
         app_ecu
         app_sim
         app_dash_profile
+        app_pedal_link
         lvgl__lvgl
         esp_common
         nvs_flash

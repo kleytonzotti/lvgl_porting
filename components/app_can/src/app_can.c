@@ -55,6 +55,9 @@ static app_can_status_t  s_status         = {0};
 static volatile uint32_t s_filter_min = 0;
 static volatile uint32_t s_filter_max = 0x1FFFFFFF;
 
+// --- OBD2 ativo (ver app_can_obd2_set_active no header) ---
+static volatile bool s_obd2_active = false;
+
 // --- SD assíncrono (task dedicada — ver app_can_sd_async_* no header) ---
 typedef enum {
     SD_ASYNC_OP_MOUNT,
@@ -697,4 +700,80 @@ esp_err_t app_can_sd_async_get_last_err(void)
     esp_err_t e = s_async_last_err;
     xSemaphoreGive(s_lock);
     return e;
+}
+
+// ─────────────────────────────────────────────────────
+// OBD2 ativo — reinstala o driver TWAI em modo NORMAL (transmite) ou volta
+// pro LISTEN_ONLY padrão (só escuta). O modo só pode ser escolhido na
+// instalação do driver, por isso precisa parar + desinstalar + reinstalar
+// em vez de só trocar uma flag.
+// ─────────────────────────────────────────────────────
+
+esp_err_t app_can_obd2_set_active(bool enable)
+{
+    if (!s_lock) {
+        ESP_RETURN_ON_ERROR(app_can_init(), TAG, "CAN init failed");
+    }
+    if (enable == s_obd2_active && s_driver_started) return ESP_OK;
+
+    // Pausa a task de captura antes de mexer no driver — twai_receive() não
+    // pode estar em andamento durante um uninstall/install. O timeout do
+    // twai_receive é 50ms; 100ms garante que a task já voltou pro laço
+    // "if (!s_running)" antes de seguirmos.
+    bool was_running = s_running;
+    s_running = false;
+    if (was_running) vTaskDelay(pdMS_TO_TICKS(100));
+
+    ESP_RETURN_ON_ERROR(bsp_can_set_selected(true), TAG, "CAN select failed");
+
+    if (s_driver_started) { twai_stop();             s_driver_started = false; }
+    if (s_driver_ready)   { twai_driver_uninstall();  s_driver_ready   = false; }
+
+    twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(
+        BSP_CAN_TX, BSP_CAN_RX, enable ? TWAI_MODE_NORMAL : TWAI_MODE_LISTEN_ONLY);
+    g.rx_queue_len   = APP_CAN_RX_QUEUE_LEN;
+    g.tx_queue_len   = enable ? 4 : 0;
+    g.alerts_enabled = TWAI_ALERT_RX_DATA | TWAI_ALERT_RX_QUEUE_FULL |
+                       TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF;
+
+    twai_timing_config_t t = TWAI_TIMING_CONFIG_500KBITS();
+    twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    esp_err_t e = twai_driver_install(&g, &t, &f);
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_running = was_running; return e; }
+    s_driver_ready = true;
+
+    e = twai_start();
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_running = was_running; return e; }
+    s_driver_started = true;
+    s_obd2_active     = enable;
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_status.driver_ready = true;
+    xSemaphoreGive(s_lock);
+
+    s_running = was_running;
+    ESP_LOGW(TAG, "OBD2 ativo=%d — TWAI agora em modo %s",
+             enable, enable ? "NORMAL (transmite)" : "LISTEN_ONLY (so escuta)");
+    return ESP_OK;
+}
+
+bool app_can_obd2_is_active(void)
+{
+    return s_obd2_active;
+}
+
+esp_err_t app_can_obd2_request_pid(uint8_t pid)
+{
+    if (!s_obd2_active || !s_driver_started) return ESP_ERR_INVALID_STATE;
+
+    twai_message_t msg = {0};
+    msg.identifier       = 0x7DF;   // ID de broadcast padrao Mode 01 (SAE J1979)
+    msg.data_length_code = 8;
+    msg.data[0] = 0x02;   // 2 bytes uteis a seguir (modo + pid)
+    msg.data[1] = 0x01;   // Mode 01 = dado atual
+    msg.data[2] = pid;
+    for (int i = 3; i < 8; i++) msg.data[i] = 0x55;   // padding padrao ISO 15765
+
+    return twai_transmit(&msg, pdMS_TO_TICKS(50));
 }

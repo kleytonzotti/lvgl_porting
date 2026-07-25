@@ -169,8 +169,3 @@ void ui_splash_show(void)
 
     ESP_LOGI(TAG, "Splash criado - %dms para o menu", SPLASH_DURATION_MS);
 }
-
-void ui_splash_create(void)
-{
-    ui_splash_show();
-}

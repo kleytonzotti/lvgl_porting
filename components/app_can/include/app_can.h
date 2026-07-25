@@ -104,6 +104,23 @@ int app_can_sd_async_get_dir_result(app_can_sd_entry_t *out, uint32_t max_entrie
 // Resultado da última operação simples concluída (mount/delete/format).
 esp_err_t app_can_sd_async_get_last_err(void);
 
+// --- OBD2 ativo (opcional, ver ROADMAP.md §6) ---
+// Por padrão o driver TWAI roda em modo LISTEN_ONLY: nunca transmite no
+// barramento, seguro mesmo ligado num carro de verdade (é assim que o
+// sniffer passivo funciona). Ativar o modo OBD2 reinstala o driver em modo
+// NORMAL pra poder mandar requisições SAE J1979 Mode 01 (ID 0x7DF) e ler
+// as respostas (0x7E8+) — ou seja, o painel passa a "falar" no barramento,
+// não só escutar. Desligar volta pro LISTEN_ONLY. O sniffer continua
+// funcionando normalmente nos dois modos (a diferença é só a capacidade
+// de transmitir).
+esp_err_t app_can_obd2_set_active(bool enable);
+bool      app_can_obd2_is_active(void);
+
+// Manda uma requisição Mode 01 pro PID indicado (frame padrão de 8 bytes,
+// preenchido com 0x55 conforme convenção ISO 15765). Retorna
+// ESP_ERR_INVALID_STATE se o modo OBD2 não estiver ativo.
+esp_err_t app_can_obd2_request_pid(uint8_t pid);
+
 #ifdef __cplusplus
 }
 #endif
