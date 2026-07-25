@@ -24,6 +24,17 @@ CONFIG_SPIRAM_SPEED_80M=y
 # CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 # CONFIG_SPIRAM_RODATA=y
 
+# Sem isso, a interrupcao do driver RGB (que realimenta o bounce buffer)
+# nao roda enquanto o cache de flash esta desabilitado — e o ESP-IDF
+# desabilita esse cache (em AMBOS os nucleos) durante qualquer acesso a
+# NVS/flash. Toda troca de tela le o perfil ativo da NVS varias vezes
+# (get_active_dash_profile em ui_screen_config.c/ui_screen_dashboard.c),
+# entao cada abertura de menu gera varias janelas de bounce buffer parado
+# -> driver detecta desync -> reinicia a DMA no meio do frame -> a tela
+# "balanca" (varias vezes seguidas = "sambada"). Ver Kconfig do componente
+# esp_lcd (LCD_RGB_ISR_IRAM_SAFE).
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
