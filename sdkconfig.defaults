@@ -24,16 +24,18 @@ CONFIG_SPIRAM_SPEED_80M=y
 # CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 # CONFIG_SPIRAM_RODATA=y
 
-# Sem isso, a interrupcao do driver RGB (que realimenta o bounce buffer)
-# nao roda enquanto o cache de flash esta desabilitado — e o ESP-IDF
-# desabilita esse cache (em AMBOS os nucleos) durante qualquer acesso a
-# NVS/flash. Toda troca de tela le o perfil ativo da NVS varias vezes
-# (get_active_dash_profile em ui_screen_config.c/ui_screen_dashboard.c),
-# entao cada abertura de menu gera varias janelas de bounce buffer parado
-# -> driver detecta desync -> reinicia a DMA no meio do frame -> a tela
-# "balanca" (varias vezes seguidas = "sambada"). Ver Kconfig do componente
-# esp_lcd (LCD_RGB_ISR_IRAM_SAFE).
-CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+# REVERTIDO — CONFIG_LCD_RGB_ISR_IRAM_SAFE=y parecia certo (deixa a ISR do
+# bounce buffer rodar mesmo com o cache de flash desabilitado por acesso a
+# NVS), mas causa PANIC: o framebuffer esta em PSRAM (fb_in_psram=1, ver
+# bsp_lcd_rgb.c) e PSRAM tambem depende do MESMO cache que fica desabilitado
+# durante nvs_flash_init()/leituras NVS. A ISR "IRAM-safe" passa a rodar
+# nessa janela e tenta ler o framebuffer em PSRAM -> "Cache disabled but
+# cached memory region accessed" -> crash no boot (visto em
+# lcd_rgb_panel_fill_bounce_buffer, chamado de nvs_flash_init via
+# app_dash_profile_init). So funciona com bounce buffer fonte em SRAM
+# interna, nao e o nosso caso. NAO reativar sem mover o framebuffer pra
+# fora da PSRAM.
+# CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
