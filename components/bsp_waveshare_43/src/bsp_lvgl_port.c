@@ -234,6 +234,18 @@ esp_err_t bsp_lvgl_init(void)
 
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
+            // Tentativa revertida: bb_mode=true trocava o sync de swap de
+            // framebuffer de on_vsync (INICIO do frame) pra on_frame_buf_
+            // complete (dispara so quando o bounce buffer termina de ler o
+            // frame INTEIRO, ou seja, bem mais tarde). So atrasou o sinal
+            // "pode desenhar no outro buffer" sem tocar na causa real —
+            // piorou (passou a balancar em qualquer menu). Causa real:
+            // ver esp_lcd_panel_rgb.c (IDF) lcd_rgb_panel_try_restart_
+            // transmission() — se a ISR de refill do bounce buffer nao
+            // acompanha o pixel clock (contencao de PSRAM sob carga de CPU),
+            // o driver detecta desync e reinicia a DMA no meio do frame, o
+            // que o proprio comentario do driver admite causar um shift
+            // visivel de 1 frame. bb_mode nao influencia esse mecanismo.
             .bb_mode       = false,
             .avoid_tearing = true,
         },
