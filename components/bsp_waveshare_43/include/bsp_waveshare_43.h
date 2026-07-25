@@ -100,7 +100,7 @@ extern "C" {
 #define BSP_LCD_BOUNCE_BUFFER_PX    (BSP_LCD_H_RES * BSP_LCD_BOUNCE_LINES)
 
 // LVGL task
-#define BSP_LVGL_TARGET_FPS         (35)
+#define BSP_LVGL_TARGET_FPS         (10)
 #define BSP_LVGL_REFR_PERIOD_MS     (1000 / BSP_LVGL_TARGET_FPS)
 #define BSP_LVGL_TICK_MS            (10)
 #define BSP_LVGL_TASK_STACK_KB      (12)
