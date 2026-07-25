@@ -1,0 +1,63 @@
+# Waveshare ESP32-S3-Touch-LCD-4.3B usa o modulo ESP32-S3-N16R8:
+# 16MB Flash + 8MB PSRAM Octal. Config aqui e a mesma do demo oficial
+# da Waveshare (ESP32-S3-Touch-LCD-4.3B-BOX-Demo/08_lvgl_Porting) para
+# este chip; PSRAM em modo Quad/40M corrompe o framebuffer (fica na PSRAM
+# e o painel RGB faz DMA continuo dela).
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# FETCH_INSTRUCTIONS/RODATA (ligados no demo oficial da Waveshare) fazem
+# codigo e constantes rodarem direto da PSRAM — competindo pelo MESMO
+# barramento que o framebuffer do LCD usa o tempo todo. Isso bate com o
+# sintoma reportado (tela embaralha/balanca TODA VEZ que troca de tela,
+# nao so ocasionalmente): montar uma tela nova executa muito codigo ainda
+# fora do cache, e cada instrucao buscada na PSRAM disputa com o DMA de
+# video bem na hora de pico. Desligando para testar. Se o build falhar
+# com overflow de IRAM/DROM, essas flags eram necessarias por causa do
+# tamanho do binario e precisamos de outra saida (reduzir codigo em IRAM
+# ou aceitar o tradeoff); se o build passar, teste se o embaralhamento
+# sumiu.
+# CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+# CONFIG_SPIRAM_RODATA=y
+
+# REVERTIDO — CONFIG_LCD_RGB_ISR_IRAM_SAFE=y parecia certo (deixa a ISR do
+# bounce buffer rodar mesmo com o cache de flash desabilitado por acesso a
+# NVS), mas causa PANIC: o framebuffer esta em PSRAM (fb_in_psram=1, ver
+# bsp_lcd_rgb.c) e PSRAM tambem depende do MESMO cache que fica desabilitado
+# durante nvs_flash_init()/leituras NVS. A ISR "IRAM-safe" passa a rodar
+# nessa janela e tenta ler o framebuffer em PSRAM -> "Cache disabled but
+# cached memory region accessed" -> crash no boot (visto em
+# lcd_rgb_panel_fill_bounce_buffer, chamado de nvs_flash_init via
+# app_dash_profile_init). So funciona com bounce buffer fonte em SRAM
+# interna, nao e o nosso caso. NAO reativar sem mover o framebuffer pra
+# fora da PSRAM.
+# CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# BLE via NimBLE (app_ble)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Default (INFO) faz o host logar cada advertising/scan report continuamente
+# no monitor serial; WARNING deixa so erros/avisos.
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+
+# Partição "factory" de 1MB (single-app padrão) ficou pequena depois dos
+# componentes novos (app_ecu/app_pedal_link/app_sim/app_dash_profile) —
+# binário passou de 1MB por ~4KB. "Large" usa 1500K, com folga (flash tem
+# 16MB, sobra espaço de sobra). Ver README.md sobre apagar o sdkconfig e
+# rodar Reconfigure Project pra isso realmente ser aplicado.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Sem isso, o sprintf embutido do LVGL (CONFIG_LV_USE_BUILTIN_SPRINTF) NÃO
+# processa "%f" — qualquer lv_label_set_text_fmt com número decimal (bateria,
+# AFR, lambda, G-force, mínimo/máximo) imprime lixo tipo "fV" em vez do
+# número. Faltou desde o início do porting; só apareceu agora que o
+# dashboard passou a mostrar mais números decimais.
+CONFIG_LV_USE_FLOAT=y
