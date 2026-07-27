@@ -19,6 +19,9 @@ extern "C" {
 #define BSP_LCD_V_RES               (480)
 
 // RGB panel clock
+// Timing validado para o painel RGB da Waveshare 4.3B. Os porches, definidos
+// em bsp_lcd_rgb.c, sao parte do protocolo do painel e nao devem ser
+// substituidos por valores menores genericos.
 #define BSP_LCD_PIXEL_CLOCK_HZ      (16 * 1000 * 1000)
 
 // RGB pins
@@ -96,11 +99,14 @@ extern "C" {
 // redesenha os 800x480 inteiros de uma vez numa troca de tela, disputando
 // o barramento PSRAM com o resto do sistema). 10 linhas nao foi suficiente;
 // subindo pra 20.
-#define BSP_LCD_BOUNCE_LINES        (20)
+#define BSP_LCD_BOUNCE_LINES        (40)
 #define BSP_LCD_BOUNCE_BUFFER_PX    (BSP_LCD_H_RES * BSP_LCD_BOUNCE_LINES)
 
 // LVGL task
-#define BSP_LVGL_TARGET_FPS         (10)
+// O painel, com os timings abaixo e PCLK de 16 MHz, suporta ~39 Hz. 30 FPS
+// deixa margem para o bounce buffer atender o DMA mesmo durante uma troca de
+// tela, sem a latencia artificial que o limite anterior de 10 FPS introduzia.
+#define BSP_LVGL_TARGET_FPS         (30)
 #define BSP_LVGL_REFR_PERIOD_MS     (1000 / BSP_LVGL_TARGET_FPS)
 #define BSP_LVGL_TICK_MS            (10)
 #define BSP_LVGL_TASK_STACK_KB      (12)

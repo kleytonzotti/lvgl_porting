@@ -4,8 +4,8 @@
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.portWin": "COM17",
-  "idf.currentSetup": "/home/zotti/.espressif/v5.5.4/esp-idf",
+  "idf.portWin": "COM15",
+  "idf.currentSetup": "C:\\Espressif\\.espressif\\v5.4.4\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },

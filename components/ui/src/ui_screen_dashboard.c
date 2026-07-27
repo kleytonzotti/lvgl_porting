@@ -308,6 +308,10 @@ static void update_timer_cb(lv_timer_t *timer)
     if (app_sim_is_enabled()) {
         app_sim_data_t d;
         app_sim_get_data(&d);
+        if (s_lbl_status) {
+            lv_label_set_text(s_lbl_status, LV_SYMBOL_PLAY " DEMO ATIVO");
+            lv_obj_set_style_text_color(s_lbl_status, ZOTTI_YELLOW, 0);
+        }
         ui_screen_dashboard_update(d.rpm, d.speed_kph, d.map_kpa, d.tps_pct,
                                    d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, d.accel_g);
         return;
@@ -1069,7 +1073,7 @@ void ui_screen_dashboard_show(void)
     apply_theme_color();
 
     // Timer de atualizacao — 200ms, mesma cadencia das outras telas com dado ao vivo.
-    s_timer = lv_timer_create(update_timer_cb, 200, NULL);
+    s_timer = lv_timer_create(update_timer_cb, 33, NULL);
     update_timer_cb(NULL);
 
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, true);

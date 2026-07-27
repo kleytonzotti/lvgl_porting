@@ -10,7 +10,7 @@
 
 #define APP_SIM_TASK_STACK     3072
 #define APP_SIM_TASK_PRIORITY  3
-#define APP_SIM_TICK_MS        100
+#define APP_SIM_TICK_MS        33
 
 static const char *TAG = "APP_SIM";
 
@@ -69,16 +69,18 @@ static phase_def_t phase_def(phase_t ph)
 {
     switch (ph) {
     case PHASE_IDLE:
-        return (phase_def_t){ .rpm_target = 850, .throttle_target = 0,  .min_ticks = 30, .max_ticks = 60 };
+        // Pausa curta apenas para a partida ficar perceptivel; o Demo nao
+        // deve permanecer parado em 850 rpm por varios segundos.
+        return (phase_def_t){ .rpm_target = 900, .throttle_target = 2,  .min_ticks = 8, .max_ticks = 15 };
     case PHASE_ACCEL:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.6f, .throttle_target = 90, .min_ticks = 15, .max_ticks = 30 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.82f, .throttle_target = 88, .min_ticks = 120, .max_ticks = 210 };
     case PHASE_CRUISE:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.40f, .throttle_target = 32, .min_ticks = 40, .max_ticks = 90 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.52f, .throttle_target = 28, .min_ticks = 90, .max_ticks = 150 };
     case PHASE_NEAR_REDLINE:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.97f, .throttle_target = 98, .min_ticks = 10, .max_ticks = 20 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.96f, .throttle_target = 96, .min_ticks = 30, .max_ticks = 60 };
     case PHASE_DECEL:
     default:
-        return (phase_def_t){ .rpm_target = 1100, .throttle_target = 0, .min_ticks = 15, .max_ticks = 30 };
+        return (phase_def_t){ .rpm_target = 1200, .throttle_target = 0, .min_ticks = 75, .max_ticks = 120 };
     }
 }
 
@@ -125,7 +127,8 @@ static void sim_tick(void)
 
     // dt = 0.1s (APP_SIM_TICK_MS) — conversão grosseira de km/h -> g.
     float dv_ms  = (s_speed_f - s_speed_prev) * (1000.0f / 3600.0f);
-    float accel_g = clampf((dv_ms / 0.1f) / 9.81f, -1.2f, 1.2f);
+    float dt_s = (float)APP_SIM_TICK_MS / 1000.0f;
+    float accel_g = clampf((dv_ms / dt_s) / 9.81f, -1.2f, 1.2f);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_enabled) {
@@ -168,24 +171,58 @@ void app_sim_init(void)
 
 void app_sim_set_enabled(bool enable)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (enable && !s_enabled) {
+        // Todo inicio de Demo parte de um estado visivel e previsivel. Antes,
+        // reativar o modo continuava o ciclo anterior sem indicacao na tela.
+        s_phase = PHASE_IDLE;
+        s_phase_ticks = 0;
+        s_phase_len = 8;
+        s_rpm_f = 850.0f;
+        s_throttle_f = 0.0f;
+        s_speed_f = 0.0f;
+        s_speed_prev = 0.0f;
+        s_ect_f = 20.0f;
+        s_warmup_ticks = 0;
+        memset(&s_data, 0, sizeof(s_data));
+        s_data.rpm = 850;
+        s_data.ect_c = 20;
+        s_data.iat_c = 26;
+        s_data.batt_v = 13.9f;
+        s_data.lambda = 1.0f;
+    }
     s_enabled = enable;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "Demo %s", enable ? "ativado" : "desativado");
 }
 
 bool app_sim_is_enabled(void)
 {
-    return s_enabled;
+    if (!s_lock) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool enabled = s_enabled;
+    xSemaphoreGive(s_lock);
+    return enabled;
 }
 
 void app_sim_set_redline(uint16_t redline_rpm)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (redline_rpm > 0) {
         s_redline_rpm = redline_rpm;
     }
+    xSemaphoreGive(s_lock);
 }
 
 uint16_t app_sim_get_redline(void)
 {
-    return s_redline_rpm;
+    if (!s_lock) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint16_t redline = s_redline_rpm;
+    xSemaphoreGive(s_lock);
+    return redline;
 }
 
 void app_sim_get_data(app_sim_data_t *out)

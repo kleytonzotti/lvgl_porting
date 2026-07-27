@@ -4,6 +4,8 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -21,14 +23,23 @@ static app_dash_minmax_t  s_mm;
 static bool               s_have_data = false;   // true depois da 1a leitura real
 static volatile bool      s_dirty     = false;    // tem recorde novo esperando gravar
 static esp_timer_handle_t s_flush_timer;
+static SemaphoreHandle_t  s_lock;
 
-static void save_now(void)
+static void save_snapshot(const app_dash_minmax_t *data)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_blob(h, NVS_KEY, &s_mm, sizeof(s_mm));
+    nvs_set_blob(h, NVS_KEY, data, sizeof(*data));
     nvs_commit(h);
     nvs_close(h);
+}
+
+static void save_now(void)
+{
+    app_dash_minmax_t snapshot;
+    snapshot = s_mm;
+    xSemaphoreGive(s_lock);
+    save_snapshot(&snapshot);
 }
 
 // ─────────────────────────────────────────────────────
@@ -49,10 +60,16 @@ static void save_now(void)
 static void flush_timer_cb(void *arg)
 {
     (void)arg;
+    app_dash_minmax_t snapshot;
+    bool save = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_dirty) {
         s_dirty = false;
-        save_now();
+        snapshot = s_mm;
+        save = true;
     }
+    xSemaphoreGive(s_lock);
+    if (save) save_snapshot(&snapshot);
 }
 
 static void ensure_flush_timer(void)
@@ -68,6 +85,9 @@ static void ensure_flush_timer(void)
 
 void app_dash_minmax_init(void)
 {
+    if (!s_lock) s_lock = xSemaphoreCreateMutex();
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     memset(&s_mm, 0, sizeof(s_mm));
     s_have_data = false;
 
@@ -79,6 +99,7 @@ void app_dash_minmax_init(void)
         }
         nvs_close(h);
     }
+    xSemaphoreGive(s_lock);
     ensure_flush_timer();
     ESP_LOGI(TAG, "app_dash_minmax pronto (dados salvos: %s)", s_have_data ? "sim" : "nao");
 }
@@ -99,6 +120,8 @@ void app_dash_minmax_init(void)
 void app_dash_minmax_update(float rpm, float speed, float map_kpa, float tps,
                             float ect, float iat, float batt, float afr)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!s_have_data) {
         s_mm.rpm_min   = s_mm.rpm_max   = rpm;
         s_mm.speed_min = s_mm.speed_max = speed;
@@ -110,6 +133,7 @@ void app_dash_minmax_update(float rpm, float speed, float map_kpa, float tps,
         s_mm.afr_min   = s_mm.afr_max   = afr;
         s_have_data = true;
         s_dirty = true;
+        xSemaphoreGive(s_lock);
         return;
     }
 
@@ -126,18 +150,23 @@ void app_dash_minmax_update(float rpm, float speed, float map_kpa, float tps,
     if (changed) {
         s_dirty = true;
     }
+    xSemaphoreGive(s_lock);
 }
 
 #undef UPDATE_FIELD
 
 void app_dash_minmax_get(app_dash_minmax_t *out)
 {
-    if (!out) return;
+    if (!out || !s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     *out = s_mm;
+    xSemaphoreGive(s_lock);
 }
 
 void app_dash_minmax_reset(void)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     s_have_data = false;
     memset(&s_mm, 0, sizeof(s_mm));
     s_dirty = false;

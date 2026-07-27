@@ -8,7 +8,8 @@ CONFIG_IDF_TARGET="esp32s3"
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
-CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_SPEED_120M=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 # FETCH_INSTRUCTIONS/RODATA (ligados no demo oficial da Waveshare) fazem
 # codigo e constantes rodarem direto da PSRAM — competindo pelo MESMO
@@ -37,9 +38,23 @@ CONFIG_SPIRAM_SPEED_80M=y
 # fora da PSRAM.
 # CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 
+# Quando o driver RGB precisar reiniciar uma transmissao apos um underflow do
+# bounce buffer, espere o VSYNC. Sem isto o reinicio pode ocorrer no meio do
+# quadro e aparece como deslocamento/"chacoalhada" horizontal. Nao elimina a
+# causa de um underflow, mas elimina o quadro visualmente corrompido.
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
-CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHFREQ_120M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_BOOTLOADER_FLASH_DC_AWARE=y
+CONFIG_SPI_FLASH_HPM_ENA=y
+
+# O RGB DMA, LVGL e bounce buffer exigem margem de CPU e barramento. Estes
+# valores sao os recomendados pela Waveshare para o benchmark da 4.3B.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 # BLE via NimBLE (app_ble)
 CONFIG_BT_ENABLED=y
