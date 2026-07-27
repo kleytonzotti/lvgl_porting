@@ -4,6 +4,7 @@
 
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -48,6 +49,7 @@ static float s_ect_f      = 20.0f;   // "frio" no boot, esquenta com o tempo
 static uint32_t s_warmup_ticks = 0;
 
 static app_sim_data_t s_data = {0};
+static int64_t        s_demo_start_us = 0;
 
 // Ruído pequeno e determinístico o bastante (RNG de hardware do ESP32) só
 // pra não ficar com número igual toda hora — não precisa de qualidade
@@ -63,6 +65,48 @@ static float clampf(float v, float lo, float hi)
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+// Fonte de dados baseada no relogio: a Demo continua avancando mesmo se uma
+// task de fundo perder tempo de CPU para CAN, BLE ou LVGL.
+static void update_demo_from_clock_locked(void)
+{
+    float t = (float)(esp_timer_get_time() - s_demo_start_us) / 1000000.0f;
+    while (t >= 28.0f) t -= 28.0f;
+
+    float rpm, speed, tps, accel;
+    if (t < 0.5f) {
+        rpm = 900.0f; speed = 0.0f; tps = 2.0f; accel = 0.0f;
+    } else if (t < 8.5f) {
+        float p = (t - 0.5f) / 8.0f;
+        rpm = 900.0f + p * (float)s_redline_rpm * 0.78f;
+        speed = p * 135.0f; tps = 86.0f; accel = 0.34f;
+    } else if (t < 14.0f) {
+        rpm = (float)s_redline_rpm * 0.48f + noise(120.0f);
+        speed = 132.0f + noise(2.0f); tps = 30.0f; accel = noise(0.015f);
+    } else if (t < 18.5f) {
+        float pull = t - 14.0f;
+        float gear_cycle = pull - (float)((int)(pull / 1.5f)) * 1.5f;
+        rpm = (float)s_redline_rpm * (0.57f + (gear_cycle / 1.5f) * 0.38f);
+        speed = 132.0f + pull * 5.0f; tps = 96.0f; accel = 0.28f;
+    } else if (t < 26.0f) {
+        float p = (t - 18.5f) / 7.5f;
+        rpm = (float)s_redline_rpm * (0.68f * (1.0f - p)) + 900.0f;
+        speed = 154.0f * (1.0f - p) + 12.0f; tps = 0.0f; accel = -0.22f;
+    } else {
+        rpm = 900.0f; speed = 12.0f; tps = 3.0f; accel = -0.03f;
+    }
+
+    s_data.rpm          = (uint16_t)clampf(rpm, 0.0f, (float)s_redline_rpm);
+    s_data.speed_kph    = (uint8_t)clampf(speed, 0.0f, 220.0f);
+    s_data.throttle_pct = (uint8_t)clampf(tps, 0.0f, 100.0f);
+    s_data.map_kpa      = (uint8_t)clampf(28.0f + tps * 0.72f, 20.0f, 102.0f);
+    s_data.tps_pct      = s_data.throttle_pct;
+    s_data.ect_c        = (int8_t)(82.0f + noise(2.0f));
+    s_data.iat_c        = (int8_t)(27.0f + tps * 0.05f + noise(1.0f));
+    s_data.batt_v       = 13.9f + noise(0.08f);
+    s_data.lambda       = (tps > 70.0f ? 0.90f : (tps < 5.0f ? 1.05f : 1.00f)) + noise(0.01f);
+    s_data.accel_g      = accel + noise(0.01f);
 }
 
 static phase_def_t phase_def(phase_t ph)
@@ -191,6 +235,7 @@ void app_sim_set_enabled(bool enable)
         s_data.iat_c = 26;
         s_data.batt_v = 13.9f;
         s_data.lambda = 1.0f;
+        s_demo_start_us = esp_timer_get_time();
     }
     s_enabled = enable;
     xSemaphoreGive(s_lock);
@@ -230,6 +275,7 @@ void app_sim_get_data(app_sim_data_t *out)
     if (!out) return;
     if (!s_lock) { memset(out, 0, sizeof(*out)); return; }
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_enabled) update_demo_from_clock_locked();
     *out = s_data;
     xSemaphoreGive(s_lock);
 }
