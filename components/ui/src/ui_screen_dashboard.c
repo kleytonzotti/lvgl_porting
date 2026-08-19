@@ -49,7 +49,7 @@ static lv_obj_t *s_lbl_status  = NULL;
 
 // Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
 // esse layout está ativo.
-#define SHIFT_SEGMENTS 10
+#define SHIFT_SEGMENTS 8
 static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
 static lv_obj_t *s_lbl_gmeter = NULL;
 static lv_obj_t *s_bar_gmeter = NULL;
@@ -203,7 +203,7 @@ static void update_shift_bar(int32_t rpm, uint16_t redline)
         // um pouco antes do corte, não só exatamente nele.
         float threshold = (float)redline * (float)(i + 1) / (float)(SHIFT_SEGMENTS + 2);
         bool  lit = (float)rpm >= threshold;
-        lv_color_t base = (i < 5) ? ZOTTI_GREEN : (i < 8) ? ZOTTI_YELLOW : ZOTTI_RED;
+        lv_color_t base = (i < 4) ? ZOTTI_GREEN : (i < 6) ? ZOTTI_YELLOW : ZOTTI_RED;
         lv_obj_set_style_bg_color(s_shift_seg[i], base, 0);
         lv_obj_set_style_bg_opa(s_shift_seg[i], lit ? LV_OPA_COVER : LV_OPA_20, 0);
     }
@@ -322,9 +322,9 @@ static void update_timer_cb(lv_timer_t *timer)
     if (s_lbl_status) {
         bool connected = (st.state == APP_ECU_STATE_CONNECTED);
         lv_label_set_text(s_lbl_status, connected
-            ? LV_SYMBOL_BLUETOOTH " ECU: Conectada"
-            : LV_SYMBOL_BLUETOOTH " ECU: Aguardando...");
-        lv_obj_set_style_text_color(s_lbl_status, connected ? ZOTTI_GREEN : ZOTTI_GRAY, 0);
+            ? LV_SYMBOL_BLUETOOTH " ECU Conectada"
+            : LV_SYMBOL_BLUETOOTH " ECU Desconectada");
+        lv_obj_set_style_text_color(s_lbl_status, connected ? ZOTTI_GREEN : ZOTTI_RED, 0);
     }
 
     app_ecu_data_t d;
@@ -1034,11 +1034,6 @@ void ui_screen_dashboard_show(void)
     lv_obj_set_style_text_font(lbl_back, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_back);
 
-    lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "DASHBOARD");
-    lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
     // Estilo/Modelo/Corte do dashboard agora se ajustam na tela de Config
     // (junto do Tema) — sem botao "Perfis" nem modal aqui.

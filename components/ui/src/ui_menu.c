@@ -127,7 +127,7 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_SETTINGS,   "ECU",          cb_ecu);
     create_menu_btn(grid, LV_SYMBOL_LIST,       "CAN",          cb_can);
     create_menu_btn(grid, LV_SYMBOL_SAVE,       "Data Logger",  cb_datalogger);
-    create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Arquivos SD",  cb_sd_files);
+    //create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Arquivos SD",  cb_sd_files);
     create_menu_btn(grid, LV_SYMBOL_EDIT,       "Configuracoes", cb_config);
     create_menu_btn(grid, LV_SYMBOL_HOME,       "Sistema",      cb_sistema);
     create_menu_btn(grid, LV_SYMBOL_SHUFFLE,    "Pedal",        cb_pedal);
