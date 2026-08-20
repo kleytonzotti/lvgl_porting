@@ -43,8 +43,8 @@ static lv_obj_t *s_lbl_status  = NULL;
 
 // Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
 // esse layout está ativo.
-#define SHIFT_SEGMENTS 8
-#define SHIFT_GREEN_COUNT 4
+#define SHIFT_SEGMENTS 10
+#define SHIFT_GREEN_COUNT 6
 #define SHIFT_YELLOW_COUNT 2
 static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
 static lv_obj_t *s_lbl_gmeter = NULL;
