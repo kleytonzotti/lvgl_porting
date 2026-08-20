@@ -23,14 +23,8 @@ static const char *TAG = "UI_DASHBOARD";
 #define RPM_ARC_START_DEG   135.0f
 #define RPM_ARC_SWEEP_DEG   270.0f
 
-// lv_scale_set_line_needle_value: o parametro "needle_length" NAO e
-// "0 = raio cheio" (achismo errado que usamos antes) — 0 e literalmente
-// comprimento ZERO (ver managed_components/lvgl__lvgl/src/widgets/scale/
-// lv_scale.c:245-256: so vira raio cheio quando needle_length >= metade do
-// tamanho do mostrador). 1000 e maior que qualquer mostrador usado aqui (o
-// maior tem 260px, raio 130px), entao sempre cai no clamp de raio cheio,
-// em qualquer chamada, sem precisar saber o tamanho exato do mostrador.
-#define DIAL_NEEDLE_LEN     1000
+// Ponteiro curto reduz a area invalidada a cada atualizacao do mostrador.
+#define DIAL_NEEDLE_LEN     80
 
 // Referencias de widgets para atualizacao futura.
 static lv_obj_t *s_arc_rpm     = NULL;   // so existe no layout Grid (lv_arc)
@@ -50,6 +44,8 @@ static lv_obj_t *s_lbl_status  = NULL;
 // Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
 // esse layout está ativo.
 #define SHIFT_SEGMENTS 8
+#define SHIFT_GREEN_COUNT 4
+#define SHIFT_YELLOW_COUNT 2
 static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
 static lv_obj_t *s_lbl_gmeter = NULL;
 static lv_obj_t *s_bar_gmeter = NULL;
@@ -64,6 +60,7 @@ static lv_obj_t *s_grid_mm[GRID_CH_COUNT];
 static lv_obj_t   *s_scr           = NULL;
 static lv_timer_t *s_timer         = NULL;
 static bool        s_redline_flash = false;
+static int32_t     s_arc_target    = -1;
 
 static app_dash_profile_t s_active_profile;
 static int32_t             s_active_index = 0;
@@ -120,6 +117,7 @@ static void redline_anim_exec_cb(void *var, int32_t v)
     LV_UNUSED(var);
     lv_color_t c = lv_color_mix(ZOTTI_RED, ZOTTI_WHITE, (uint8_t)v);
     if (s_arc_rpm) lv_obj_set_style_arc_color(s_arc_rpm, c, LV_PART_INDICATOR);
+    if (s_needle_rpm) lv_obj_set_style_line_color(s_needle_rpm, c, 0);
     if (s_lbl_rpm) lv_obj_set_style_text_color(s_lbl_rpm, c, 0);
 }
 
@@ -144,6 +142,7 @@ static void redline_stop(void)
     if (!s_redline_flash) return;
     s_redline_flash = false;
     if (s_arc_rpm)  lv_obj_set_style_arc_color(s_arc_rpm, ui_dash_accent_color(s_active_profile.color_theme), LV_PART_INDICATOR);
+    if (s_needle_rpm) lv_obj_set_style_line_color(s_needle_rpm, ZOTTI_ACCENT, 0);
     if (s_lbl_rpm) {
         lv_anim_delete(s_lbl_rpm, redline_anim_exec_cb);
         lv_obj_set_style_text_color(s_lbl_rpm, ZOTTI_WHITE, 0);
@@ -162,6 +161,9 @@ static void arc_anim_exec_cb(void *var, int32_t v)
 
 static void animate_arc_to(lv_obj_t *arc, int32_t value)
 {
+    if (s_arc_target == value) return;
+    s_arc_target = value;
+
     // Essencial: lv_anim_start() NÃO substitui uma animação existente do
     // mesmo (var, exec_cb) sozinho — cada chamada cria uma entrada nova na
     // lista interna do LVGL. Chamando isso a cada 200ms sem apagar a
@@ -199,14 +201,19 @@ static void update_shift_bar(int32_t rpm, uint16_t redline)
     if (!s_shift_seg[0] || redline == 0) return;
 
     for (int i = 0; i < SHIFT_SEGMENTS; i++) {
-        // Deixa 2 "segmentos" de folga acima do redline — os 10 acendem
-        // um pouco antes do corte, não só exatamente nele.
-        float threshold = (float)redline * (float)(i + 1) / (float)(SHIFT_SEGMENTS + 2);
+        float threshold = (float)redline * (float)(i + 1) / (float)SHIFT_SEGMENTS;
         bool  lit = (float)rpm >= threshold;
-        lv_color_t base = (i < 4) ? ZOTTI_GREEN : (i < 6) ? ZOTTI_YELLOW : ZOTTI_RED;
+        lv_color_t base = (i < SHIFT_GREEN_COUNT) ? ZOTTI_GREEN :
+                          (i < SHIFT_GREEN_COUNT + SHIFT_YELLOW_COUNT) ? ZOTTI_YELLOW : ZOTTI_RED;
         lv_obj_set_style_bg_color(s_shift_seg[i], base, 0);
         lv_obj_set_style_bg_opa(s_shift_seg[i], lit ? LV_OPA_COVER : LV_OPA_20, 0);
     }
+}
+
+static int32_t shift_redline_start(uint16_t redline)
+{
+    int red_start = SHIFT_GREEN_COUNT + SHIFT_YELLOW_COUNT;
+    return (int32_t)((float)redline * (float)(red_start + 1) / (float)SHIFT_SEGMENTS);
 }
 
 // ─────────────────────────────────────────────────────
@@ -288,11 +295,11 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     update_grid_tiles((float)speed_kph, (float)map_kpa, (float)tps_pct,
                        (float)ect_c, (float)iat_c, batt_v, afr);
 
-    // Efeito de corte — 90% do redline do perfil ativo, com pequena
-    // histerese (85%) pra nao ficar oscilando ligando/desligando na borda.
-    if (rpm >= (int32_t)(s_active_profile.redline_rpm * 0.90f)) {
+    // O cursor entra no vermelho junto com o primeiro segmento vermelho.
+    int32_t redline_start_rpm = shift_redline_start(s_active_profile.redline_rpm);
+    if (rpm >= redline_start_rpm) {
         redline_start();
-    } else if (rpm < (int32_t)(s_active_profile.redline_rpm * 0.85f)) {
+    } else if (rpm < (int32_t)(redline_start_rpm * 0.97f)) {
         redline_stop();
     }
 }
@@ -420,6 +427,7 @@ static void screen_delete_cb(lv_event_t *e)
     if (s_lbl_rpm) lv_anim_delete(s_lbl_rpm, NULL);   // mata anim de corte (redline_start)
     s_redline_flash = false;
     s_scr = NULL;
+    s_arc_target = -1;
     reset_optional_widget_refs();
 }
 
@@ -469,7 +477,7 @@ static void build_dial(lv_obj_t *parent, int32_t size, int32_t min, int32_t max,
 
     lv_obj_t *needle = lv_line_create(scale);
     lv_obj_set_style_line_color(needle, ZOTTI_ACCENT, 0);
-    lv_obj_set_style_line_width(needle, 4, 0);
+    lv_obj_set_style_line_width(needle, 3, 0);
     lv_obj_set_style_line_rounded(needle, true, 0);
     lv_scale_set_line_needle_value(scale, needle, DIAL_NEEDLE_LEN, min);
     if (out_needle) *out_needle = needle;
