@@ -253,6 +253,6 @@ void ui_screen_pedal_show(void)
     s_timer = lv_timer_create(update_values, 300, NULL);
     update_values(NULL);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Tela do modulo de pedal criada");
 }

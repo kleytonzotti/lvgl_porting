@@ -44,7 +44,7 @@ static lv_obj_t *s_lbl_status  = NULL;
 // Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
 // esse layout está ativo.
 #define SHIFT_SEGMENTS 10
-#define SHIFT_GREEN_COUNT 6
+#define SHIFT_GREEN_COUNT 5
 #define SHIFT_YELLOW_COUNT 2
 static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
 static lv_obj_t *s_lbl_gmeter = NULL;
@@ -411,7 +411,7 @@ static void reset_optional_widget_refs(void)
 
 static void screen_delete_cb(lv_event_t *e)
 {
-    // ui_screen_dashboard_show() troca de tela com lv_scr_load_anim(...,
+    // ui_screen_dashboard_show() troca de tela com ui_screen_load(...,
     // auto_del=true) — a tela ANTIGA so e apagada de verdade ~200ms depois
     // (duracao do fade), nao na hora. Quando o proprio dashboard chama
     // ui_screen_dashboard_show() de novo (troca de Estilo/Layout), esse
@@ -884,10 +884,11 @@ static void build_grid_layout(lv_obj_t *scr)
 
 static void build_twin_layout(lv_obj_t *scr)
 {
-    const int32_t dial_size = 260;
-    const int32_t dial_y    = 70;
-    const int32_t left_x    = 60;
-    const int32_t right_x   = 800 - 60 - dial_size;
+    const int32_t rpm_dial_size   = 230;
+    const int32_t speed_dial_size = 300;
+    const int32_t dial_y          = 125;
+    const int32_t left_x          = 75;
+    const int32_t right_x         = 800 - 60 - speed_dial_size;
     bool sport = (s_active_profile.gauge_style == APP_DASH_GAUGE_DIGITAL);
 
     if (sport) {
@@ -900,32 +901,32 @@ static void build_twin_layout(lv_obj_t *scr)
         lv_label_set_text(s_lbl_rpm, "0");
         lv_obj_set_style_text_font(s_lbl_rpm, ZOTTI_FONT_LOGO, 0);
         lv_obj_set_style_text_color(s_lbl_rpm, ZOTTI_WHITE, 0);
-        lv_obj_set_pos(s_lbl_rpm, left_x, 85);
+        lv_obj_set_pos(s_lbl_rpm, left_x, 170);
 
         lv_obj_t *lbl_rpm_name = lv_label_create(scr);
         lv_label_set_text(lbl_rpm_name, "RPM");
         lv_obj_set_style_text_font(lbl_rpm_name, ZOTTI_FONT_SMALL, 0);
         lv_obj_set_style_text_color(lbl_rpm_name, ZOTTI_GRAY, 0);
-        lv_obj_set_pos(lbl_rpm_name, left_x, 175);
+        lv_obj_set_pos(lbl_rpm_name, left_x, 205);
 
         s_lbl_speed = lv_label_create(scr);
         lv_label_set_text(s_lbl_speed, "0");
         lv_obj_set_style_text_font(s_lbl_speed, ZOTTI_FONT_LOGO, 0);
         lv_obj_set_style_text_color(s_lbl_speed, ZOTTI_WHITE, 0);
-        lv_obj_align(s_lbl_speed, LV_ALIGN_TOP_RIGHT, -(800 - right_x - dial_size), 85);
+        lv_obj_align(s_lbl_speed, LV_ALIGN_TOP_RIGHT, -(800 - right_x - speed_dial_size), 115);
 
         lv_obj_t *lbl_speed_name = lv_label_create(scr);
         lv_label_set_text(lbl_speed_name, "km/h");
         lv_obj_set_style_text_font(lbl_speed_name, ZOTTI_FONT_SMALL, 0);
         lv_obj_set_style_text_color(lbl_speed_name, ZOTTI_GRAY, 0);
-        lv_obj_align(lbl_speed_name, LV_ALIGN_TOP_RIGHT, -(800 - right_x - dial_size), 175);
+        lv_obj_align(lbl_speed_name, LV_ALIGN_TOP_RIGHT, -(800 - right_x - speed_dial_size), 205);
 
         // Faixa de leituras secundarias — so no Sport. No Classico os
         // sensores ficam de fora de proposito (so os 2 relogios + o anel de
         // shift em volta do RPM, ver mais abaixo).
         lv_obj_t *row = lv_obj_create(scr);
         lv_obj_set_size(row, 780, 70);
-        lv_obj_set_pos(row, 10, 362);
+        lv_obj_set_pos(row, 10, 397);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
@@ -941,13 +942,13 @@ static void build_twin_layout(lv_obj_t *scr)
         s_lbl_batt = create_sensor_card(row, "BATERIA", 0);
     } else {
         // Mostrador RPM (esquerda) — redondo, com ticks + ponteiro.
-        build_dial(scr, dial_size, 0, 8000, &s_dial_rpm, &s_needle_rpm);
+        build_dial(scr, rpm_dial_size, 0, 8000, &s_dial_rpm, &s_needle_rpm);
         lv_obj_set_pos(s_dial_rpm, left_x, dial_y);
 
         // Anel de pontinhos de shift-light em volta do mostrador de RPM
         // (verde -> laranja -> vermelho, acende conforme o RPM sobe —
         // update_shift_bar ja faz isso, so precisa dos segmentos existirem).
-        build_shift_ring(scr, s_dial_rpm, dial_size);
+        build_shift_ring(scr, s_dial_rpm, rpm_dial_size);
 
         // Numero e unidade ficam DENTRO do proprio mostrador (filhos dele) —
         // assim centralizam sozinhos, sem precisar calcular posicao manual.
@@ -964,7 +965,7 @@ static void build_twin_layout(lv_obj_t *scr)
         lv_obj_align(lbl_rpm_name, LV_ALIGN_CENTER, 0, 54);
 
         // Mostrador velocidade (direita) — mesmo tratamento do de RPM.
-        build_dial(scr, dial_size, 0, 220, &s_dial_speed, &s_needle_speed);
+        build_dial(scr, speed_dial_size, 0, 220, &s_dial_speed, &s_needle_speed);
         lv_obj_set_pos(s_dial_speed, right_x, dial_y);
 
         s_lbl_speed = lv_label_create(s_dial_speed);
@@ -1079,7 +1080,7 @@ void ui_screen_dashboard_show(void)
     s_timer = lv_timer_create(update_timer_cb, 33, NULL);
     update_timer_cb(NULL);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Dashboard criado (perfil '%s', estilo=%d, corte=%u)",
              s_active_profile.name, (int)s_active_profile.gauge_style,
              (unsigned)s_active_profile.redline_rpm);

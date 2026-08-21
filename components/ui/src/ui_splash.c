@@ -162,7 +162,7 @@ void ui_splash_show(void)
     lv_obj_set_style_text_color(lbl_ver, lv_color_hex(0x1A3A5A), 0);
     lv_obj_align(lbl_ver, LV_ALIGN_BOTTOM_RIGHT, -15, -10);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
 
     lv_timer_t *t = lv_timer_create(splash_timer_cb, SPLASH_DURATION_MS, NULL);
     lv_timer_set_repeat_count(t, 1);

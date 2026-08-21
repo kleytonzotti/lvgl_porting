@@ -706,6 +706,6 @@ void ui_screen_can_sniffer_show(void)
     // Poll timer 200ms
     s_timer = lv_timer_create(poll_timer_cb, 200, NULL);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "CAN sniffer screen ready (running=%d, filter=%d)", s_running, s_active_filter);
 }

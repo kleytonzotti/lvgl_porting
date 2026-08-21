@@ -17,6 +17,11 @@ void ui_nav(void (*fn)(void))
     lv_async_call(ui_nav_async_cb, (void *)(uintptr_t)fn);
 }
 
+void ui_screen_load(lv_obj_t *scr)
+{
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 180, 0, true);
+}
+
 // Callbacks de navegacao.
 static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_screen_dashboard_show); }
 static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_scanner_show); }
@@ -132,6 +137,6 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_HOME,       "Sistema",      cb_sistema);
     create_menu_btn(grid, LV_SYMBOL_SHUFFLE,    "Pedal",        cb_pedal);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Menu principal exibido - 9 botoes disponiveis");
 }

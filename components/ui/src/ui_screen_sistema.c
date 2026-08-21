@@ -64,7 +64,7 @@ static void touch_diag_show(void)
     // Reutiliza a tela de touch ja implementada como filho do content.
     ui_screen_touch_create(content);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
 }
 
 static void touch_diag_cb(lv_event_t *e)
@@ -203,6 +203,6 @@ void ui_screen_sistema_show(void)
     lv_obj_set_style_text_font(lbl_btn_t, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_btn_t);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Sistema criado");
 }

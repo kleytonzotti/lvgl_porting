@@ -257,6 +257,6 @@ void ui_screen_ecu_show(void)
     s_timer = lv_timer_create(update_values, 100, NULL);
     update_values(NULL);   // primeiro frame já com o estado atual, sem esperar 300ms
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "ECU criado");
 }
