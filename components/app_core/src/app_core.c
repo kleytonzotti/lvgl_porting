@@ -7,9 +7,23 @@
 #include "app_sim.h"
 #include "app_dash_profile.h"
 #include "app_dash_minmax.h"
+#include "nvs_flash.h"
+
+static void init_nvs(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+}
 
 void app_core_init(void)
 {
+    // BLE (calibracao PHY) e perfis/dashboard usam NVS. Ela precisa estar
+    // pronta antes de inicializar qualquer um desses subsistemas.
+    init_nvs();
     app_io_init();
     app_can_init();
     app_can_sniffer_start();  // fulltime: start collecting at boot

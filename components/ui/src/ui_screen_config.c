@@ -20,6 +20,19 @@ static lv_timer_t *s_ble_timer;
 static app_ble_scan_result_t s_ble_devices[APP_BLE_MAX_SCAN_RESULTS];
 static uint32_t s_ble_device_count;
 
+static void config_screen_delete_cb(lv_event_t *e)
+{
+    if (lv_event_get_target(e) != s_scr) return;
+    app_ble_scan_stop();
+    if (s_ble_timer) {
+        lv_timer_delete(s_ble_timer);
+        s_ble_timer = NULL;
+    }
+    s_ble_list_cont = NULL;
+    s_ble_status_lbl = NULL;
+    s_scr = NULL;
+}
+
 static void ble_device_row_cb(lv_event_t *e)
 {
     uint32_t idx = (uint32_t)(intptr_t)lv_event_get_user_data(e);
@@ -295,6 +308,7 @@ void ui_screen_config_show(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     s_scr = scr;
+    lv_obj_add_event_cb(scr, config_screen_delete_cb, LV_EVENT_DELETE, NULL);
 
     // Header.
     lv_obj_t *header = lv_obj_create(scr);
@@ -482,6 +496,6 @@ void ui_screen_config_show(void)
     lv_obj_set_style_text_font(lbl_ota, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_ota);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Config criado");
 }

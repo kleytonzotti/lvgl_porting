@@ -114,6 +114,6 @@ void ui_screen_scanner_show(void)
     lv_obj_set_style_text_font(lbl_m, ZOTTI_FONT_TINY, 0);
     lv_obj_align(lbl_m, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Scanner criado");
 }

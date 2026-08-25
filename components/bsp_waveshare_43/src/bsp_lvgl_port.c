@@ -23,6 +23,9 @@ static volatile uint32_t s_flush_wait_ms     = 0;
 static volatile uint32_t s_flush_slow_count  = 0;
 static volatile uint32_t s_flush_tick_start  = 0;
 static volatile bool     s_flush_in_progress = false;
+static lv_obj_t          *s_fps_label         = NULL;
+static uint32_t           s_fps_last_render   = 0;
+static uint32_t           s_fps_last_tick     = 0;
 
 void bsp_touch_register_cb(bsp_touch_cb_t cb)
 {
@@ -82,6 +85,41 @@ static void lvgl_diag_timer_cb(lv_timer_t *timer)
     last = now;
 }
 
+// Medicao feita dentro da task do LVGL: nao disputa mutex nem conta frames
+// parcialmente preparados. O label vive em lv_layer_top(), portanto continua
+// visivel durante todas as trocas de tela.
+static void fps_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    uint32_t now = (uint32_t)lv_tick_get();
+    uint32_t elapsed = now - s_fps_last_tick;
+    if (elapsed == 0 || !s_fps_label) return;
+
+    uint32_t rendered = s_render_count;
+    uint32_t fps = ((rendered - s_fps_last_render) * 1000u + elapsed / 2u) / elapsed;
+    lv_label_set_text_fmt(s_fps_label, "FPS: %lu", (unsigned long)fps);
+    s_fps_last_render = rendered;
+    s_fps_last_tick = now;
+}
+
+static void create_fps_overlay(void)
+{
+    s_fps_label = lv_label_create(lv_layer_top());
+    lv_label_set_text(s_fps_label, "FPS: --");
+    lv_obj_set_style_text_font(s_fps_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_fps_label, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(s_fps_label, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_fps_label, LV_OPA_70, 0);
+    lv_obj_set_style_pad_hor(s_fps_label, 5, 0);
+    lv_obj_set_style_pad_ver(s_fps_label, 2, 0);
+    lv_obj_set_style_radius(s_fps_label, 3, 0);
+    lv_obj_align(s_fps_label, LV_ALIGN_BOTTOM_LEFT, 6, -6);
+    lv_obj_add_flag(s_fps_label, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    s_fps_last_render = s_render_count;
+    s_fps_last_tick = (uint32_t)lv_tick_get();
+    lv_timer_create(fps_timer_cb, 1000, NULL);
+}
+
 static void apply_fps_limit(lv_display_t *disp)
 {
     lv_timer_t *refr_timer = lv_display_get_refr_timer(disp);
@@ -94,7 +132,7 @@ static void apply_fps_limit(lv_display_t *disp)
         lv_timer_set_period(anim_timer, BSP_LVGL_REFR_PERIOD_MS);
     }
 
-    ESP_LOGI(TAG, "FPS limitado a %d (%dms por frame)",
+    ESP_LOGI(TAG, "Cadencia alvo configurada em %d FPS (%dms por frame)",
              BSP_LVGL_TARGET_FPS, BSP_LVGL_REFR_PERIOD_MS);
 }
 
@@ -272,6 +310,7 @@ esp_err_t bsp_lvgl_init(void)
         lv_display_add_event_cb(disp, on_flush_wait_finish_cb,
                                 LV_EVENT_FLUSH_WAIT_FINISH, NULL);
         lv_timer_create(lvgl_diag_timer_cb, 3000, NULL);
+        create_fps_overlay();
         bsp_lvgl_unlock();
     }
 

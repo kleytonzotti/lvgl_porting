@@ -23,14 +23,8 @@ static const char *TAG = "UI_DASHBOARD";
 #define RPM_ARC_START_DEG   135.0f
 #define RPM_ARC_SWEEP_DEG   270.0f
 
-// lv_scale_set_line_needle_value: o parametro "needle_length" NAO e
-// "0 = raio cheio" (achismo errado que usamos antes) — 0 e literalmente
-// comprimento ZERO (ver managed_components/lvgl__lvgl/src/widgets/scale/
-// lv_scale.c:245-256: so vira raio cheio quando needle_length >= metade do
-// tamanho do mostrador). 1000 e maior que qualquer mostrador usado aqui (o
-// maior tem 260px, raio 130px), entao sempre cai no clamp de raio cheio,
-// em qualquer chamada, sem precisar saber o tamanho exato do mostrador.
-#define DIAL_NEEDLE_LEN     1000
+// Ponteiro curto reduz a area invalidada a cada atualizacao do mostrador.
+#define DIAL_NEEDLE_LEN     80
 
 // Referencias de widgets para atualizacao futura.
 static lv_obj_t *s_arc_rpm     = NULL;   // so existe no layout Grid (lv_arc)
@@ -50,7 +44,12 @@ static lv_obj_t *s_lbl_status  = NULL;
 // Widgets exclusivos do layout Race (estilo FuelTech) — só existem quando
 // esse layout está ativo.
 #define SHIFT_SEGMENTS 10
+#define SHIFT_GREEN_COUNT 5
+#define SHIFT_YELLOW_COUNT 2
+#define SHIFT_GREEN_END_PERCENT 60
+#define SHIFT_ORANGE_END_PERCENT 75
 static lv_obj_t *s_shift_seg[SHIFT_SEGMENTS];
+static lv_obj_t *s_shift_ring[4];
 static lv_obj_t *s_lbl_gmeter = NULL;
 static lv_obj_t *s_bar_gmeter = NULL;
 
@@ -63,7 +62,9 @@ static lv_obj_t *s_grid_mm[GRID_CH_COUNT];
 
 static lv_obj_t   *s_scr           = NULL;
 static lv_timer_t *s_timer         = NULL;
-static bool        s_redline_flash = false;
+static int32_t     s_arc_target    = -1;
+static int32_t     s_shift_last_value = -1;
+static bool        s_redline_active = false;
 
 static app_dash_profile_t s_active_profile;
 static int32_t             s_active_index = 0;
@@ -115,67 +116,29 @@ static void apply_theme_color(void)
 // de arco pra colorir).
 // ─────────────────────────────────────────────────────
 
-static void redline_anim_exec_cb(void *var, int32_t v)
-{
-    LV_UNUSED(var);
-    lv_color_t c = lv_color_mix(ZOTTI_RED, ZOTTI_WHITE, (uint8_t)v);
-    if (s_arc_rpm) lv_obj_set_style_arc_color(s_arc_rpm, c, LV_PART_INDICATOR);
-    if (s_lbl_rpm) lv_obj_set_style_text_color(s_lbl_rpm, c, 0);
-}
-
-static void redline_start(void)
-{
-    if (s_redline_flash || !s_lbl_rpm) return;
-    s_redline_flash = true;
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_lbl_rpm);
-    lv_anim_set_exec_cb(&a, redline_anim_exec_cb);
-    lv_anim_set_values(&a, 0, 255);
-    lv_anim_set_time(&a, 150);
-    lv_anim_set_playback_time(&a, 150);
-    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_start(&a);
-}
-
-static void redline_stop(void)
-{
-    if (!s_redline_flash) return;
-    s_redline_flash = false;
-    if (s_arc_rpm)  lv_obj_set_style_arc_color(s_arc_rpm, ui_dash_accent_color(s_active_profile.color_theme), LV_PART_INDICATOR);
-    if (s_lbl_rpm) {
-        lv_anim_delete(s_lbl_rpm, redline_anim_exec_cb);
-        lv_obj_set_style_text_color(s_lbl_rpm, ZOTTI_WHITE, 0);
-    }
-}
-
 // ─────────────────────────────────────────────────────
 // Animação suave do ponteiro/arco de RPM (em vez de saltar direto pro
 // valor novo a cada atualização).
 // ─────────────────────────────────────────────────────
 
-static void arc_anim_exec_cb(void *var, int32_t v)
+static void set_redline_active(bool active)
 {
-    lv_arc_set_value((lv_obj_t *)var, v);
+    if (s_redline_active == active) return;
+    s_redline_active = active;
+    if (s_needle_rpm) {
+        lv_obj_set_style_line_color(s_needle_rpm, active ? ZOTTI_RED : ZOTTI_ACCENT, 0);
+    }
+    if (s_lbl_rpm) {
+        lv_obj_set_style_text_color(s_lbl_rpm, active ? ZOTTI_RED : ZOTTI_WHITE, 0);
+    }
 }
 
 static void animate_arc_to(lv_obj_t *arc, int32_t value)
 {
-    // Essencial: lv_anim_start() NÃO substitui uma animação existente do
-    // mesmo (var, exec_cb) sozinho — cada chamada cria uma entrada nova na
-    // lista interna do LVGL. Chamando isso a cada 200ms sem apagar a
-    // anterior primeiro, vaza memória (cada anim é uma alocação) até
-    // esgotar a memória interna (bem menor que a PSRAM nesta placa).
-    lv_anim_delete(arc, arc_anim_exec_cb);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, arc);
-    lv_anim_set_exec_cb(&a, arc_anim_exec_cb);
-    lv_anim_set_values(&a, lv_arc_get_value(arc), value);
-    lv_anim_set_time(&a, 180);
-    lv_anim_start(&a);
+    if (!arc) return;
+    if (s_arc_target == value) return;
+    s_arc_target = value;
+    lv_arc_set_value(arc, value);
 }
 
 // Move o ponteiro de um mostrador lv_scale (Estilo Classico) pro valor
@@ -196,14 +159,36 @@ static void update_dial_needle(lv_obj_t *scale, lv_obj_t *needle, int32_t value)
 
 static void update_shift_bar(int32_t rpm, uint16_t redline)
 {
-    if (!s_shift_seg[0] || redline == 0) return;
+    if (redline == 0) return;
+
+    if (s_shift_ring[0]) {
+        int32_t value = rpm;
+        if (value < 0) value = 0;
+        if (value > redline) value = redline;
+        if (value != s_shift_last_value) {
+            const int32_t starts[3] = { 0, SHIFT_GREEN_END_PERCENT, SHIFT_ORANGE_END_PERCENT };
+            const int32_t ends[3] = { SHIFT_GREEN_END_PERCENT, SHIFT_ORANGE_END_PERCENT, 100 };
+            for (int i = 0; i < 3; i++) {
+                int32_t start_rpm = redline * starts[i] / 100;
+                int32_t end_rpm = redline * ends[i] / 100;
+                int32_t zone_value = (value - start_rpm) * 100 / (end_rpm - start_rpm);
+                if (zone_value < 0) zone_value = 0;
+                if (zone_value > 100) zone_value = 100;
+                lv_arc_set_value(s_shift_ring[i], zone_value);
+            }
+            lv_arc_set_value(s_shift_ring[3], value);
+            s_shift_last_value = value;
+        }
+        return;
+    }
+
+    if (!s_shift_seg[0]) return;
 
     for (int i = 0; i < SHIFT_SEGMENTS; i++) {
-        // Deixa 2 "segmentos" de folga acima do redline — os 10 acendem
-        // um pouco antes do corte, não só exatamente nele.
-        float threshold = (float)redline * (float)(i + 1) / (float)(SHIFT_SEGMENTS + 2);
+        float threshold = (float)redline * (float)(i + 1) / (float)SHIFT_SEGMENTS;
         bool  lit = (float)rpm >= threshold;
-        lv_color_t base = (i < 5) ? ZOTTI_GREEN : (i < 8) ? ZOTTI_YELLOW : ZOTTI_RED;
+        lv_color_t base = (i < SHIFT_GREEN_COUNT) ? ZOTTI_GREEN :
+                          (i < SHIFT_GREEN_COUNT + SHIFT_YELLOW_COUNT) ? lv_color_hex(0xFF9800) : ZOTTI_RED;
         lv_obj_set_style_bg_color(s_shift_seg[i], base, 0);
         lv_obj_set_style_bg_opa(s_shift_seg[i], lit ? LV_OPA_COVER : LV_OPA_20, 0);
     }
@@ -223,7 +208,7 @@ static void update_gmeter(float accel_g)
         int32_t bar_val = (int32_t)(accel_g * 100.0f);
         if (bar_val > 100) bar_val = 100;
         if (bar_val < -100) bar_val = -100;
-        lv_bar_set_value(s_bar_gmeter, bar_val, LV_ANIM_ON);
+        lv_bar_set_value(s_bar_gmeter, bar_val, LV_ANIM_OFF);
     }
 }
 
@@ -270,7 +255,7 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     update_dial_needle(s_dial_speed, s_needle_speed, speed_kph);  // Duplo, Estilo Classico
     if (s_lbl_rpm)   lv_label_set_text_fmt(s_lbl_rpm,   "%ld", (long)rpm);
     if (s_lbl_speed) lv_label_set_text_fmt(s_lbl_speed, "%ld", (long)speed_kph);
-    if (s_bar_tps)   lv_bar_set_value(s_bar_tps, tps_pct, LV_ANIM_ON);
+    if (s_bar_tps)   lv_bar_set_value(s_bar_tps, tps_pct, LV_ANIM_OFF);
     if (s_lbl_map)   lv_label_set_text_fmt(s_lbl_map,  "%ld kPa", (long)map_kpa);
     if (s_lbl_tps)   lv_label_set_text_fmt(s_lbl_tps,  "%ld%%", (long)tps_pct);
     if (s_lbl_ect)  lv_label_set_text_fmt(s_lbl_ect,  "%ld C", (long)ect_c);
@@ -288,13 +273,14 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     update_grid_tiles((float)speed_kph, (float)map_kpa, (float)tps_pct,
                        (float)ect_c, (float)iat_c, batt_v, afr);
 
-    // Efeito de corte — 90% do redline do perfil ativo, com pequena
-    // histerese (85%) pra nao ficar oscilando ligando/desligando na borda.
-    if (rpm >= (int32_t)(s_active_profile.redline_rpm * 0.90f)) {
-        redline_start();
-    } else if (rpm < (int32_t)(s_active_profile.redline_rpm * 0.85f)) {
-        redline_stop();
+    int32_t redline_start_rpm = (int32_t)s_active_profile.redline_rpm * SHIFT_ORANGE_END_PERCENT / 100;
+    int32_t redline_stop_rpm = (int32_t)s_active_profile.redline_rpm * 70 / 100;
+    if (rpm >= redline_start_rpm) {
+        set_redline_active(true);
+    } else if (rpm < redline_stop_rpm) {
+        set_redline_active(false);
     }
+
 }
 
 // ─────────────────────────────────────────────────────
@@ -308,6 +294,10 @@ static void update_timer_cb(lv_timer_t *timer)
     if (app_sim_is_enabled()) {
         app_sim_data_t d;
         app_sim_get_data(&d);
+        if (s_lbl_status) {
+            lv_label_set_text(s_lbl_status, LV_SYMBOL_PLAY " DEMO ATIVO");
+            lv_obj_set_style_text_color(s_lbl_status, ZOTTI_YELLOW, 0);
+        }
         ui_screen_dashboard_update(d.rpm, d.speed_kph, d.map_kpa, d.tps_pct,
                                    d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, d.accel_g);
         return;
@@ -318,9 +308,9 @@ static void update_timer_cb(lv_timer_t *timer)
     if (s_lbl_status) {
         bool connected = (st.state == APP_ECU_STATE_CONNECTED);
         lv_label_set_text(s_lbl_status, connected
-            ? LV_SYMBOL_BLUETOOTH " ECU: Conectada"
-            : LV_SYMBOL_BLUETOOTH " ECU: Aguardando...");
-        lv_obj_set_style_text_color(s_lbl_status, connected ? ZOTTI_GREEN : ZOTTI_GRAY, 0);
+            ? LV_SYMBOL_BLUETOOTH " ECU Conectada"
+            : LV_SYMBOL_BLUETOOTH " ECU Desconectada");
+        lv_obj_set_style_text_color(s_lbl_status, connected ? ZOTTI_GREEN : ZOTTI_RED, 0);
     }
 
     app_ecu_data_t d;
@@ -394,13 +384,16 @@ static void reset_optional_widget_refs(void)
     s_bar_tps = NULL;
     s_lbl_status = NULL;
     s_lbl_gmeter = s_bar_gmeter = NULL;
+    s_redline_active = false;
+    s_shift_last_value = -1;
     for (int i = 0; i < SHIFT_SEGMENTS; i++) s_shift_seg[i] = NULL;
+    for (int i = 0; i < 4; i++) s_shift_ring[i] = NULL;
     for (int i = 0; i < GRID_CH_COUNT; i++) { s_grid_val[i] = NULL; s_grid_mm[i] = NULL; }
 }
 
 static void screen_delete_cb(lv_event_t *e)
 {
-    // ui_screen_dashboard_show() troca de tela com lv_scr_load_anim(...,
+    // ui_screen_dashboard_show() troca de tela com ui_screen_load(...,
     // auto_del=true) — a tela ANTIGA so e apagada de verdade ~200ms depois
     // (duracao do fade), nao na hora. Quando o proprio dashboard chama
     // ui_screen_dashboard_show() de novo (troca de Estilo/Layout), esse
@@ -414,8 +407,8 @@ static void screen_delete_cb(lv_event_t *e)
     if (s_timer) { lv_timer_delete(s_timer); s_timer = NULL; }
     if (s_arc_rpm) lv_anim_delete(s_arc_rpm, NULL);   // mata anim do arco (layout Grid)
     if (s_lbl_rpm) lv_anim_delete(s_lbl_rpm, NULL);   // mata anim de corte (redline_start)
-    s_redline_flash = false;
     s_scr = NULL;
+    s_arc_target = -1;
     reset_optional_widget_refs();
 }
 
@@ -465,7 +458,7 @@ static void build_dial(lv_obj_t *parent, int32_t size, int32_t min, int32_t max,
 
     lv_obj_t *needle = lv_line_create(scale);
     lv_obj_set_style_line_color(needle, ZOTTI_ACCENT, 0);
-    lv_obj_set_style_line_width(needle, 4, 0);
+    lv_obj_set_style_line_width(needle, 3, 0);
     lv_obj_set_style_line_rounded(needle, true, 0);
     lv_scale_set_line_needle_value(scale, needle, DIAL_NEEDLE_LEN, min);
     if (out_needle) *out_needle = needle;
@@ -496,34 +489,60 @@ static void build_shift_bar(lv_obj_t *parent, int32_t x, int32_t y, int32_t widt
     }
 }
 
-// Anel de pontinhos de shift-light em volta de um mostrador redondo (Estilo
-// Classico no layout Duplo) — reaproveita s_shift_seg[]/update_shift_bar(),
-// so que os pontos ficam distribuidos ao longo do MESMO arco de 270 graus
-// do mostrador (RPM_ARC_START_DEG/SWEEP_DEG), um pouco pra fora do anel,
-// em vez de enfileirados. "dial" e "parent" devem ter o mesmo pai (mesma
-// logica do lv_obj_align_to usado em build_shift_bar).
+// Barra circular de shift-light com tres cores separadas. Todos os arcos usam
+// exatamente o centro do mostrador; o quarto e apenas o filete cromado.
 static void build_shift_ring(lv_obj_t *parent, lv_obj_t *dial, int32_t dial_size)
 {
-    float radius = (float)dial_size / 2.0f + 16.0f;
-    for (int i = 0; i < SHIFT_SEGMENTS; i++) {
-        float frac = (float)i / (float)(SHIFT_SEGMENTS - 1);
-        float deg  = RPM_ARC_START_DEG + frac * RPM_ARC_SWEEP_DEG;
-        if (deg >= 360.0f) deg -= 360.0f;
-        float rad  = deg * (float)M_PI / 180.0f;
-        int32_t dx = (int32_t)(radius * cosf(rad));
-        int32_t dy = (int32_t)(radius * sinf(rad));
+    const int32_t starts[3] = { 0, SHIFT_GREEN_END_PERCENT, SHIFT_ORANGE_END_PERCENT };
+    const int32_t ends[3] = { SHIFT_GREEN_END_PERCENT, SHIFT_ORANGE_END_PERCENT, 100 };
+    const lv_color_t colors[3] = {
+        ZOTTI_GREEN,
+        lv_color_hex(0xFF9800),
+        ZOTTI_RED,
+    };
+    const lv_color_t chrome_light = lv_color_hex(0xE8EDF2);
+    const int32_t ring_size = dial_size + 32;
 
-        lv_obj_t *seg = lv_obj_create(parent);
-        lv_obj_set_size(seg, 14, 14);
-        lv_obj_set_style_radius(seg, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(seg, 0, 0);
-        lv_obj_set_style_bg_color(seg, ZOTTI_GRAY_DARK, 0);
-        lv_obj_set_style_bg_opa(seg, LV_OPA_20, 0);
-        lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(seg, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_align_to(seg, dial, LV_ALIGN_CENTER, dx, dy);
-        s_shift_seg[i] = seg;
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *arc = lv_arc_create(parent);
+        int32_t start_angle = (int32_t)RPM_ARC_START_DEG +
+                              (int32_t)(RPM_ARC_SWEEP_DEG * starts[i] / 100);
+        int32_t sweep = (int32_t)(RPM_ARC_SWEEP_DEG * (ends[i] - starts[i]) / 100);
+        lv_obj_set_size(arc, ring_size, ring_size);
+        lv_obj_align_to(arc, dial, LV_ALIGN_CENTER, 0, 0);
+        lv_arc_set_range(arc, 0, 100);
+        lv_arc_set_rotation(arc, start_angle);
+        lv_arc_set_bg_angles(arc, 0, sweep);
+        lv_arc_set_value(arc, 0);
+        lv_obj_set_style_arc_width(arc, 16, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(arc, colors[i], LV_PART_INDICATOR);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(arc, 0, 0);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        s_shift_ring[i] = arc;
     }
+
+    lv_obj_t *highlight = lv_arc_create(parent);
+    lv_obj_set_size(highlight, ring_size, ring_size);
+    lv_obj_align_to(highlight, dial, LV_ALIGN_CENTER, 0, 0);
+    lv_arc_set_range(highlight, 0, s_active_profile.redline_rpm);
+    lv_arc_set_rotation(highlight, (int32_t)RPM_ARC_START_DEG);
+    lv_arc_set_bg_angles(highlight, 0, (uint32_t)RPM_ARC_SWEEP_DEG);
+    lv_arc_set_value(highlight, 0);
+    lv_obj_set_style_arc_width(highlight, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(highlight, chrome_light, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(highlight, LV_OPA_70, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(highlight, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(highlight, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(highlight, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(highlight, 0, 0);
+    lv_obj_clear_flag(highlight, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(highlight, LV_OBJ_FLAG_CLICKABLE);
+    s_shift_ring[3] = highlight;
 }
 
 // ─────────────────────────────────────────────────────
@@ -572,7 +591,7 @@ static void build_classic_layout(lv_obj_t *scr)
 
         build_shift_bar(col_left, 20, 145, 220, 16);
     } else {
-        build_dial(col_left, 200, 0, 8000, &s_dial_rpm, &s_needle_rpm);
+        build_dial(col_left, 200, 0, s_active_profile.redline_rpm, &s_dial_rpm, &s_needle_rpm);
         lv_obj_align(s_dial_rpm, LV_ALIGN_CENTER, 0, -30);
 
         s_lbl_rpm = lv_label_create(col_left);
@@ -872,10 +891,11 @@ static void build_grid_layout(lv_obj_t *scr)
 
 static void build_twin_layout(lv_obj_t *scr)
 {
-    const int32_t dial_size = 260;
-    const int32_t dial_y    = 70;
-    const int32_t left_x    = 60;
-    const int32_t right_x   = 800 - 60 - dial_size;
+    const int32_t rpm_dial_size   = 230;
+    const int32_t speed_dial_size = 300;
+    const int32_t dial_y          = 125;
+    const int32_t left_x          = 75;
+    const int32_t right_x         = 800 - 60 - speed_dial_size;
     bool sport = (s_active_profile.gauge_style == APP_DASH_GAUGE_DIGITAL);
 
     if (sport) {
@@ -888,32 +908,32 @@ static void build_twin_layout(lv_obj_t *scr)
         lv_label_set_text(s_lbl_rpm, "0");
         lv_obj_set_style_text_font(s_lbl_rpm, ZOTTI_FONT_LOGO, 0);
         lv_obj_set_style_text_color(s_lbl_rpm, ZOTTI_WHITE, 0);
-        lv_obj_set_pos(s_lbl_rpm, left_x, 85);
+        lv_obj_set_pos(s_lbl_rpm, left_x, 170);
 
         lv_obj_t *lbl_rpm_name = lv_label_create(scr);
         lv_label_set_text(lbl_rpm_name, "RPM");
         lv_obj_set_style_text_font(lbl_rpm_name, ZOTTI_FONT_SMALL, 0);
         lv_obj_set_style_text_color(lbl_rpm_name, ZOTTI_GRAY, 0);
-        lv_obj_set_pos(lbl_rpm_name, left_x, 175);
+        lv_obj_set_pos(lbl_rpm_name, left_x, 205);
 
         s_lbl_speed = lv_label_create(scr);
         lv_label_set_text(s_lbl_speed, "0");
         lv_obj_set_style_text_font(s_lbl_speed, ZOTTI_FONT_LOGO, 0);
         lv_obj_set_style_text_color(s_lbl_speed, ZOTTI_WHITE, 0);
-        lv_obj_align(s_lbl_speed, LV_ALIGN_TOP_RIGHT, -(800 - right_x - dial_size), 85);
+        lv_obj_align(s_lbl_speed, LV_ALIGN_TOP_RIGHT, -(800 - right_x - speed_dial_size), 115);
 
         lv_obj_t *lbl_speed_name = lv_label_create(scr);
         lv_label_set_text(lbl_speed_name, "km/h");
         lv_obj_set_style_text_font(lbl_speed_name, ZOTTI_FONT_SMALL, 0);
         lv_obj_set_style_text_color(lbl_speed_name, ZOTTI_GRAY, 0);
-        lv_obj_align(lbl_speed_name, LV_ALIGN_TOP_RIGHT, -(800 - right_x - dial_size), 175);
+        lv_obj_align(lbl_speed_name, LV_ALIGN_TOP_RIGHT, -(800 - right_x - speed_dial_size), 205);
 
         // Faixa de leituras secundarias — so no Sport. No Classico os
         // sensores ficam de fora de proposito (so os 2 relogios + o anel de
         // shift em volta do RPM, ver mais abaixo).
         lv_obj_t *row = lv_obj_create(scr);
         lv_obj_set_size(row, 780, 70);
-        lv_obj_set_pos(row, 10, 362);
+        lv_obj_set_pos(row, 10, 397);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
@@ -929,13 +949,13 @@ static void build_twin_layout(lv_obj_t *scr)
         s_lbl_batt = create_sensor_card(row, "BATERIA", 0);
     } else {
         // Mostrador RPM (esquerda) — redondo, com ticks + ponteiro.
-        build_dial(scr, dial_size, 0, 8000, &s_dial_rpm, &s_needle_rpm);
+        build_dial(scr, rpm_dial_size, 0, s_active_profile.redline_rpm, &s_dial_rpm, &s_needle_rpm);
         lv_obj_set_pos(s_dial_rpm, left_x, dial_y);
 
         // Anel de pontinhos de shift-light em volta do mostrador de RPM
         // (verde -> laranja -> vermelho, acende conforme o RPM sobe —
         // update_shift_bar ja faz isso, so precisa dos segmentos existirem).
-        build_shift_ring(scr, s_dial_rpm, dial_size);
+        build_shift_ring(scr, s_dial_rpm, rpm_dial_size);
 
         // Numero e unidade ficam DENTRO do proprio mostrador (filhos dele) —
         // assim centralizam sozinhos, sem precisar calcular posicao manual.
@@ -952,7 +972,7 @@ static void build_twin_layout(lv_obj_t *scr)
         lv_obj_align(lbl_rpm_name, LV_ALIGN_CENTER, 0, 54);
 
         // Mostrador velocidade (direita) — mesmo tratamento do de RPM.
-        build_dial(scr, dial_size, 0, 220, &s_dial_speed, &s_needle_speed);
+        build_dial(scr, speed_dial_size, 0, 220, &s_dial_speed, &s_needle_speed);
         lv_obj_set_pos(s_dial_speed, right_x, dial_y);
 
         s_lbl_speed = lv_label_create(s_dial_speed);
@@ -1030,11 +1050,6 @@ void ui_screen_dashboard_show(void)
     lv_obj_set_style_text_font(lbl_back, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_back);
 
-    lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "DASHBOARD");
-    lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
     // Estilo/Modelo/Corte do dashboard agora se ajustam na tela de Config
     // (junto do Tema) — sem botao "Perfis" nem modal aqui.
@@ -1069,10 +1084,10 @@ void ui_screen_dashboard_show(void)
     apply_theme_color();
 
     // Timer de atualizacao — 200ms, mesma cadencia das outras telas com dado ao vivo.
-    s_timer = lv_timer_create(update_timer_cb, 200, NULL);
+    s_timer = lv_timer_create(update_timer_cb, 33, NULL);
     update_timer_cb(NULL);
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "Dashboard criado (perfil '%s', estilo=%d, corte=%u)",
              s_active_profile.name, (int)s_active_profile.gauge_style,
              (unsigned)s_active_profile.redline_rpm);

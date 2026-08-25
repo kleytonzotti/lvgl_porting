@@ -32,6 +32,27 @@ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 ```
 
+## Estabilidade do LCD e FPS
+
+- O painel RGB usa tres framebuffers em PSRAM, bounce buffer de 40 linhas em
+  SRAM e `CONFIG_LCD_RGB_RESTART_IN_VSYNC=y`. Esta ultima opcao faz qualquer
+  reinicio de transmissao provocado por underflow ocorrer no VSync, evitando
+  o deslocamento horizontal visivel no meio de um quadro durante trocas de
+  tela ou no modo Demo.
+- A cadencia alvo do LVGL e **30 FPS** (`BSP_LVGL_TARGET_FPS` em
+  `components/bsp_waveshare_43/include/bsp_waveshare_43.h`). O valor medido,
+  que pode ser menor sob carga, aparece no canto inferior esquerdo de todas
+  as telas. Nao reduza esse valor para mascarar problemas de DMA: use o
+  indicador e os logs `[FLUSH]` para diagnosticar queda real de desempenho.
+- Os timings RGB usam PCLK de 16 MHz, borda negativa, porches H 40/48/88 e
+  V 13/3/32 — valores especificos do painel 4.3B. CPU, flash e PSRAM devem
+  operar em 240 MHz/120 MHz/120 MHz; o boot precisa mostrar `cpu freq:
+  240000000 Hz` e `PSRAM: Speed: 120MHz`. Nao altere apenas o FPS do LVGL
+  esperando corrigir tremida de sinal.
+- Depois de alterar `sdkconfig.defaults`, recrie o `sdkconfig` conforme o
+  procedimento abaixo; configuracoes ja gravadas nao sao substituidas por
+  uma simples reconfiguracao.
+
 **Por quê essas duas seções precisam estar sempre alinhadas:** no ESP32-S3, flash e PSRAM compartilham o mesmo clock do MSPI (`CONFIG_SOC_MEMSPI_CORE_CLK_SHARED_WITH_PSRAM`). PSRAM em Quad/40MHz, ou qualquer combinação onde a PSRAM esteja em Octal/80MHz mas o flash não acompanhe (ex: flash ainda em DIO/40MHz), corrompe o framebuffer — o painel RGB faz DMA contínuo direto da PSRAM, então qualquer inconsistência de timing nesse barramento aparece como imagem embaralhada na tela. Já aconteceu nas duas formas (PSRAM errada e depois flash errado) durante o desenvolvimento.
 
 **Importante ao alterar `sdkconfig.defaults`:** o arquivo `sdkconfig` (gerado, fora do git) só recebe valores de `sdkconfig.defaults` para símbolos que **ainda não têm valor salvo**. Se você mudar `sdkconfig.defaults` e rodar apenas "Reconfigure Project", valores antigos já presentes no `sdkconfig` (ex: modo Quad, flash DIO) **não são sobrescritos**. Para garantir que a mudança realmente é aplicada:

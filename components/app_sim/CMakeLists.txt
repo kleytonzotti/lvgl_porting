@@ -8,5 +8,6 @@ idf_component_register(
     REQUIRES
         esp_common
         esp_hw_support
+        esp_timer
         freertos
 )

@@ -3,6 +3,7 @@
 #include "zotti_fonts.h"
 #include "esp_log.h"
 #include "app_ecu.h"
+#include "app_sim.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -10,6 +11,14 @@
 static const char *TAG = "UI_ECU";
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
+
+static void demo_toggle_cb(lv_event_t *e)
+{
+    bool enable = !app_sim_is_enabled();
+    app_sim_set_enabled(enable);
+    lv_obj_set_style_bg_color(lv_event_get_target(e),
+                              enable ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+}
 
 // Sensores recebidos via BLE da ECU externa.
 typedef struct {
@@ -70,6 +79,26 @@ static void set_val_text(int idx, const char *fmt, ...)
 static void update_values(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
+
+    if (app_sim_is_enabled()) {
+        app_sim_data_t d;
+        app_sim_get_data(&d);
+        if (s_lbl_ble) {
+            lv_label_set_text(s_lbl_ble, LV_SYMBOL_PLAY "  SIMULADOR LOCAL ATIVO (sem BLE)");
+            lv_obj_set_style_text_color(s_lbl_ble, ZOTTI_YELLOW, 0);
+        }
+        set_val_text(SENS_ESTADO, "DEMO");
+        set_val_text(SENS_RPM,     "%u", (unsigned)d.rpm);
+        set_val_text(SENS_MAP,     "%u", (unsigned)d.map_kpa);
+        set_val_text(SENS_TPS,     "%u", (unsigned)d.tps_pct);
+        set_val_text(SENS_LAMBDA,  "%.3f", (double)d.lambda);
+        set_val_text(SENS_AFR,     "%.1f", (double)(d.lambda * 14.7f));
+        set_val_text(SENS_ECT,     "%d", (int)d.ect_c);
+        set_val_text(SENS_IAT,     "%d", (int)d.iat_c);
+        set_val_text(SENS_PRESSAO, "---");
+        set_val_text(SENS_BATERIA, "%.1f", (double)d.batt_v);
+        return;
+    }
 
     app_ecu_status_t st;
     app_ecu_get_status(&st);
@@ -139,6 +168,17 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_text_font(lbl_title, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *btn_demo = lv_btn_create(header);
+    lv_obj_set_size(btn_demo, 110, 28);
+    lv_obj_align(btn_demo, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_bg_color(btn_demo, app_sim_is_enabled() ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+    lv_obj_set_style_radius(btn_demo, 4, 0);
+    lv_obj_add_event_cb(btn_demo, demo_toggle_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_demo = lv_label_create(btn_demo);
+    lv_label_set_text(lbl_demo, LV_SYMBOL_PLAY " Demo");
+    lv_obj_set_style_text_font(lbl_demo, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_demo);
 
     // Status conexao BLE.
     lv_obj_t *status_bar = lv_obj_create(scr);
@@ -214,9 +254,9 @@ void ui_screen_ecu_show(void)
         lv_obj_align(lbl_unit, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
     }
 
-    s_timer = lv_timer_create(update_values, 300, NULL);
+    s_timer = lv_timer_create(update_values, 100, NULL);
     update_values(NULL);   // primeiro frame já com o estado atual, sem esperar 300ms
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
     ESP_LOGI(TAG, "ECU criado");
 }

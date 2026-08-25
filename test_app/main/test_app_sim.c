@@ -24,6 +24,10 @@ TEST_CASE("app_sim: ligado, os valores ficam dentro de faixas fisicamente plausi
     app_sim_set_redline(7000);
     app_sim_set_enabled(true);
 
+    app_sim_data_t initial;
+    app_sim_get_data(&initial);
+    bool saw_motion = false;
+
     // Da tempo de rodar varios ticks (a task roda a cada 100ms) cobrindo
     // fases diferentes do ciclo simulado.
     for (int i = 0; i < 20; i++) {
@@ -31,6 +35,8 @@ TEST_CASE("app_sim: ligado, os valores ficam dentro de faixas fisicamente plausi
 
         app_sim_data_t d;
         app_sim_get_data(&d);
+
+        if (d.rpm > initial.rpm + 300 || d.speed_kph > 5) saw_motion = true;
 
         TEST_ASSERT_LESS_OR_EQUAL_UINT16(7000, d.rpm);
         TEST_ASSERT_LESS_OR_EQUAL_UINT8(220, d.speed_kph);   // teto interno do gerador (ver app_sim.c)
@@ -41,6 +47,8 @@ TEST_CASE("app_sim: ligado, os valores ficam dentro de faixas fisicamente plausi
         TEST_ASSERT_TRUE(d.lambda > 0.7f && d.lambda < 1.3f);
         TEST_ASSERT_TRUE(d.accel_g > -1.5f && d.accel_g < 1.5f);
     }
+
+    TEST_ASSERT_TRUE_MESSAGE(saw_motion, "Demo nao saiu da marcha lenta");
 
     app_sim_set_enabled(false);
 }

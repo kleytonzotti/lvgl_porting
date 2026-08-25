@@ -4,13 +4,14 @@
 
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #define APP_SIM_TASK_STACK     3072
 #define APP_SIM_TASK_PRIORITY  3
-#define APP_SIM_TICK_MS        100
+#define APP_SIM_TICK_MS        33
 
 static const char *TAG = "APP_SIM";
 
@@ -48,6 +49,7 @@ static float s_ect_f      = 20.0f;   // "frio" no boot, esquenta com o tempo
 static uint32_t s_warmup_ticks = 0;
 
 static app_sim_data_t s_data = {0};
+static int64_t        s_demo_start_us = 0;
 
 // Ruído pequeno e determinístico o bastante (RNG de hardware do ESP32) só
 // pra não ficar com número igual toda hora — não precisa de qualidade
@@ -65,20 +67,64 @@ static float clampf(float v, float lo, float hi)
     return v;
 }
 
+// Fonte de dados baseada no relogio: a Demo continua avancando mesmo se uma
+// task de fundo perder tempo de CPU para CAN, BLE ou LVGL.
+static void update_demo_from_clock_locked(void)
+{
+    float t = (float)(esp_timer_get_time() - s_demo_start_us) / 1000000.0f;
+    while (t >= 28.0f) t -= 28.0f;
+
+    float rpm, speed, tps, accel;
+    if (t < 0.5f) {
+        rpm = 900.0f; speed = 0.0f; tps = 2.0f; accel = 0.0f;
+    } else if (t < 8.5f) {
+        float p = (t - 0.5f) / 8.0f;
+        rpm = 900.0f + p * (float)s_redline_rpm * 0.78f;
+        speed = p * 135.0f; tps = 86.0f; accel = 0.34f;
+    } else if (t < 14.0f) {
+        rpm = (float)s_redline_rpm * 0.48f + noise(120.0f);
+        speed = 132.0f + noise(2.0f); tps = 30.0f; accel = noise(0.015f);
+    } else if (t < 18.5f) {
+        float pull = t - 14.0f;
+        float gear_cycle = pull - (float)((int)(pull / 1.5f)) * 1.5f;
+        rpm = (float)s_redline_rpm * (0.57f + (gear_cycle / 1.5f) * 0.38f);
+        speed = 132.0f + pull * 5.0f; tps = 96.0f; accel = 0.28f;
+    } else if (t < 26.0f) {
+        float p = (t - 18.5f) / 7.5f;
+        rpm = (float)s_redline_rpm * (0.68f * (1.0f - p)) + 900.0f;
+        speed = 154.0f * (1.0f - p) + 12.0f; tps = 0.0f; accel = -0.22f;
+    } else {
+        rpm = 900.0f; speed = 12.0f; tps = 3.0f; accel = -0.03f;
+    }
+
+    s_data.rpm          = (uint16_t)clampf(rpm, 0.0f, (float)s_redline_rpm);
+    s_data.speed_kph    = (uint8_t)clampf(speed, 0.0f, 220.0f);
+    s_data.throttle_pct = (uint8_t)clampf(tps, 0.0f, 100.0f);
+    s_data.map_kpa      = (uint8_t)clampf(28.0f + tps * 0.72f, 20.0f, 102.0f);
+    s_data.tps_pct      = s_data.throttle_pct;
+    s_data.ect_c        = (int8_t)(82.0f + noise(2.0f));
+    s_data.iat_c        = (int8_t)(27.0f + tps * 0.05f + noise(1.0f));
+    s_data.batt_v       = 13.9f + noise(0.08f);
+    s_data.lambda       = (tps > 70.0f ? 0.90f : (tps < 5.0f ? 1.05f : 1.00f)) + noise(0.01f);
+    s_data.accel_g      = accel + noise(0.01f);
+}
+
 static phase_def_t phase_def(phase_t ph)
 {
     switch (ph) {
     case PHASE_IDLE:
-        return (phase_def_t){ .rpm_target = 850, .throttle_target = 0,  .min_ticks = 30, .max_ticks = 60 };
+        // Pausa curta apenas para a partida ficar perceptivel; o Demo nao
+        // deve permanecer parado em 850 rpm por varios segundos.
+        return (phase_def_t){ .rpm_target = 900, .throttle_target = 2,  .min_ticks = 8, .max_ticks = 15 };
     case PHASE_ACCEL:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.6f, .throttle_target = 90, .min_ticks = 15, .max_ticks = 30 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.82f, .throttle_target = 88, .min_ticks = 120, .max_ticks = 210 };
     case PHASE_CRUISE:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.40f, .throttle_target = 32, .min_ticks = 40, .max_ticks = 90 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.52f, .throttle_target = 28, .min_ticks = 90, .max_ticks = 150 };
     case PHASE_NEAR_REDLINE:
-        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.97f, .throttle_target = 98, .min_ticks = 10, .max_ticks = 20 };
+        return (phase_def_t){ .rpm_target = (float)s_redline_rpm * 0.96f, .throttle_target = 96, .min_ticks = 30, .max_ticks = 60 };
     case PHASE_DECEL:
     default:
-        return (phase_def_t){ .rpm_target = 1100, .throttle_target = 0, .min_ticks = 15, .max_ticks = 30 };
+        return (phase_def_t){ .rpm_target = 1200, .throttle_target = 0, .min_ticks = 75, .max_ticks = 120 };
     }
 }
 
@@ -125,7 +171,8 @@ static void sim_tick(void)
 
     // dt = 0.1s (APP_SIM_TICK_MS) — conversão grosseira de km/h -> g.
     float dv_ms  = (s_speed_f - s_speed_prev) * (1000.0f / 3600.0f);
-    float accel_g = clampf((dv_ms / 0.1f) / 9.81f, -1.2f, 1.2f);
+    float dt_s = (float)APP_SIM_TICK_MS / 1000.0f;
+    float accel_g = clampf((dv_ms / dt_s) / 9.81f, -1.2f, 1.2f);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_enabled) {
@@ -168,24 +215,59 @@ void app_sim_init(void)
 
 void app_sim_set_enabled(bool enable)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (enable && !s_enabled) {
+        // Todo inicio de Demo parte de um estado visivel e previsivel. Antes,
+        // reativar o modo continuava o ciclo anterior sem indicacao na tela.
+        s_phase = PHASE_IDLE;
+        s_phase_ticks = 0;
+        s_phase_len = 8;
+        s_rpm_f = 850.0f;
+        s_throttle_f = 0.0f;
+        s_speed_f = 0.0f;
+        s_speed_prev = 0.0f;
+        s_ect_f = 20.0f;
+        s_warmup_ticks = 0;
+        memset(&s_data, 0, sizeof(s_data));
+        s_data.rpm = 850;
+        s_data.ect_c = 20;
+        s_data.iat_c = 26;
+        s_data.batt_v = 13.9f;
+        s_data.lambda = 1.0f;
+        s_demo_start_us = esp_timer_get_time();
+    }
     s_enabled = enable;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "Demo %s", enable ? "ativado" : "desativado");
 }
 
 bool app_sim_is_enabled(void)
 {
-    return s_enabled;
+    if (!s_lock) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool enabled = s_enabled;
+    xSemaphoreGive(s_lock);
+    return enabled;
 }
 
 void app_sim_set_redline(uint16_t redline_rpm)
 {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (redline_rpm > 0) {
         s_redline_rpm = redline_rpm;
     }
+    xSemaphoreGive(s_lock);
 }
 
 uint16_t app_sim_get_redline(void)
 {
-    return s_redline_rpm;
+    if (!s_lock) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint16_t redline = s_redline_rpm;
+    xSemaphoreGive(s_lock);
+    return redline;
 }
 
 void app_sim_get_data(app_sim_data_t *out)
@@ -193,6 +275,7 @@ void app_sim_get_data(app_sim_data_t *out)
     if (!out) return;
     if (!s_lock) { memset(out, 0, sizeof(*out)); return; }
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_enabled) update_demo_from_clock_locked();
     *out = s_data;
     xSemaphoreGive(s_lock);
 }

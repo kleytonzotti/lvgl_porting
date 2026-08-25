@@ -460,7 +460,7 @@ void ui_screen_sd_browser_show(void (*back_fn)(void))
 
     s_list = list_cont;
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_screen_load(scr);
 
     // Não bloqueia: mount+list são enfileirados na task de SD e a tela já
     // aparece na hora, mostrando "Carregando..." até o resultado chegar.

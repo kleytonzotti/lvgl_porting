@@ -129,6 +129,7 @@ static esp_err_t do_sd_mount(bool format_if_failed)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SPI2_HOST;
+    host.max_freq_khz = 10000; // reduz erros CRC (0x109) no slot TF desta placa
 
     spi_bus_config_t bus_cfg = {
         .mosi_io_num     = BSP_SD_MOSI,

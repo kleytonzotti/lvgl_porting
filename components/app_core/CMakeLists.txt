@@ -13,4 +13,5 @@ idf_component_register(
         app_pedal_link
         app_sim
         app_dash_profile
+        nvs_flash
 )

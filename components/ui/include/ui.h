@@ -16,6 +16,7 @@ void ui_menu_show(void);
 
 // ----- Navegacao adiada (evita corrupcao mid-frame) -----
 void ui_nav(void (*fn)(void));
+void ui_screen_load(lv_obj_t *scr);
 
 // ----- Sub-telas -----
 void ui_screen_dashboard_show(void);
