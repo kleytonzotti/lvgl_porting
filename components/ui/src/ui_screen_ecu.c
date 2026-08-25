@@ -88,15 +88,15 @@ static void update_values(lv_timer_t *timer)
             lv_obj_set_style_text_color(s_lbl_ble, ZOTTI_YELLOW, 0);
         }
         set_val_text(SENS_ESTADO, "DEMO");
-        set_val_text(SENS_RPM,     "%u", (unsigned)d.rpm);
-        set_val_text(SENS_MAP,     "%u", (unsigned)d.map_kpa);
-        set_val_text(SENS_TPS,     "%u", (unsigned)d.tps_pct);
+        set_val_text(SENS_RPM,     "%u rpm", (unsigned)d.rpm);
+        set_val_text(SENS_MAP,     "%u kPa", (unsigned)d.map_kpa);
+        set_val_text(SENS_TPS,     "%u %%", (unsigned)d.tps_pct);
         set_val_text(SENS_LAMBDA,  "%.3f", (double)d.lambda);
         set_val_text(SENS_AFR,     "%.1f", (double)(d.lambda * 14.7f));
-        set_val_text(SENS_ECT,     "%d", (int)d.ect_c);
-        set_val_text(SENS_IAT,     "%d", (int)d.iat_c);
+        set_val_text(SENS_ECT,     "%d °C", (int)d.ect_c);
+        set_val_text(SENS_IAT,     "%d °C", (int)d.iat_c);
         set_val_text(SENS_PRESSAO, "---");
-        set_val_text(SENS_BATERIA, "%.1f", (double)d.batt_v);
+        set_val_text(SENS_BATERIA, "%.1f V", (double)d.batt_v);
         return;
     }
 
@@ -118,14 +118,14 @@ static void update_values(lv_timer_t *timer)
     app_ecu_get_data(&d);
     if (!d.valid) return;
 
-    set_val_text(SENS_RPM,    "%u",   (unsigned)d.rpm);
-    set_val_text(SENS_MAP,    "%u",   (unsigned)d.map_kpa);
-    set_val_text(SENS_TPS,    "%u",   (unsigned)d.tps_pct);
+    set_val_text(SENS_RPM,    "%u rpm",   (unsigned)d.rpm);
+    set_val_text(SENS_MAP,    "%u kPa",   (unsigned)d.map_kpa);
+    set_val_text(SENS_TPS,    "%u %%",   (unsigned)d.tps_pct);
     set_val_text(SENS_LAMBDA, "%.3f", (double)d.lambda);
     set_val_text(SENS_AFR,    "%.1f", (double)(d.lambda * 14.7f));  // gasolina, estequiometrico=14.7
-    set_val_text(SENS_ECT,    "%d",   (int)d.ect_c);
-    set_val_text(SENS_IAT,    "%d",   (int)d.iat_c);
-    set_val_text(SENS_BATERIA,"%.1f", (double)d.batt_v);
+    set_val_text(SENS_ECT,    "%d °C",   (int)d.ect_c);
+    set_val_text(SENS_IAT,    "%d °C",   (int)d.iat_c);
+    set_val_text(SENS_BATERIA,"%.1f V", (double)d.batt_v);
 }
 
 static void screen_delete_cb(lv_event_t *e)
@@ -224,16 +224,6 @@ void ui_screen_ecu_show(void)
         lv_obj_set_style_radius(card, 20, 0);
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-        // Indicador lateral
-        lv_obj_t *ind = lv_obj_create(card);
-        lv_obj_set_size(ind, 4, 68);
-        lv_obj_set_pos(ind, 0, 0);
-        lv_obj_set_style_bg_color(ind, ZOTTI_ACCENT_DIM, 0);
-        lv_obj_set_style_bg_opa(ind, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(ind, 0, 0);
-        lv_obj_set_style_radius(ind, 0, 0);
-        lv_obj_clear_flag(ind, LV_OBJ_FLAG_SCROLLABLE);
-
         lv_obj_t *lbl_name = lv_label_create(card);
         lv_label_set_text(lbl_name, k_sensors[i].name);
         lv_obj_set_style_text_font(lbl_name, ZOTTI_FONT_TINY, 0);
@@ -244,7 +234,7 @@ void ui_screen_ecu_show(void)
         lv_label_set_text(lbl_val, "---");
         lv_obj_set_style_text_font(lbl_val, ZOTTI_FONT_LARGE, 0);
         lv_obj_set_style_text_color(lbl_val, ZOTTI_WHITE, 0);
-        lv_obj_align(lbl_val, LV_ALIGN_BOTTOM_LEFT, 14, -8);
+        lv_obj_align(lbl_val, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
         s_lbl_val[i] = lbl_val;
 
         lv_obj_t *lbl_unit = lv_label_create(card);
@@ -252,6 +242,7 @@ void ui_screen_ecu_show(void)
         lv_obj_set_style_text_font(lbl_unit, ZOTTI_FONT_TINY, 0);
         lv_obj_set_style_text_color(lbl_unit, ZOTTI_GRAY, 0);
         lv_obj_align(lbl_unit, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+        lv_obj_add_flag(lbl_unit, LV_OBJ_FLAG_HIDDEN);
     }
 
     s_timer = lv_timer_create(update_values, 100, NULL);
