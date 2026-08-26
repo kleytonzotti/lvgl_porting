@@ -315,10 +315,22 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     if (s_lbl_batt)  lv_label_set_text_fmt(s_lbl_batt, "%.1fV", batt_v);
 
     // Cor do ECT: verde < 90 C, amarelo 90-105 C, vermelho > 105 C.
+    // So atualiza se a cor mudou — evita invalidacao desnecessaria que causa
+    // flickering quando esta mudanca coincide com redline_active ou shift_bar.
     if (s_lbl_ect) {
-        lv_color_t ect_color = (ect_c < 90)  ? ZOTTI_GREEN  :
-                               (ect_c < 105) ? ZOTTI_YELLOW : ZOTTI_RED;
-        lv_obj_set_style_text_color(s_lbl_ect, ect_color, 0);
+        static int32_t s_last_ect_c = -999;
+        int32_t ect_band = (ect_c < 90)  ? 0 :
+                           (ect_c < 105) ? 1 : 2;
+        int32_t last_band = (s_last_ect_c < 90)  ? 0 :
+                            (s_last_ect_c < 105) ? 1 : 2;
+        if (ect_band != last_band) {
+            s_last_ect_c = ect_c;
+            lv_color_t ect_color = (ect_c < 90)  ? ZOTTI_GREEN  :
+                                   (ect_c < 105) ? ZOTTI_YELLOW : ZOTTI_RED;
+            lv_obj_set_style_text_color(s_lbl_ect, ect_color, 0);
+        } else {
+            s_last_ect_c = ect_c;
+        }
     }
 
     update_shift_bar(rpm, s_active_profile.redline_rpm);
