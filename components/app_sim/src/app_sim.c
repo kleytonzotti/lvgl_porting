@@ -34,13 +34,13 @@ typedef struct {
 
 static SemaphoreHandle_t s_lock;
 static bool              s_enabled     = false;
-static uint16_t          s_redline_rpm = 7000;
+static uint16_t          s_redline_rpm = 6000;
 
 static phase_t   s_phase       = PHASE_IDLE;
 static uint32_t  s_phase_ticks = 0;
 static uint32_t  s_phase_len   = 30;
 
-static float s_rpm_f      = 850.0f;
+static float s_rpm_f      = 800.0f;
 static float s_throttle_f = 0.0f;
 static float s_speed_f    = 0.0f;
 static float s_speed_prev = 0.0f;
@@ -90,7 +90,7 @@ static void update_demo_from_clock_locked(void)
         speed = 132.0f + pull * 5.0f; tps = 96.0f; accel = 0.28f;
     } else if (t < 26.0f) {
         float p = (t - 18.5f) / 7.5f;
-        rpm = (float)s_redline_rpm * (0.68f * (1.0f - p)) + 900.0f;
+        rpm = (float)s_redline_rpm * (0.68f * (1.0f - p)) + 800.0f;
         speed = 154.0f * (1.0f - p) + 12.0f; tps = 0.0f; accel = -0.22f;
     } else {
         rpm = 800.0f; speed = 12.0f; tps = 3.0f; accel = -0.03f;
