@@ -141,6 +141,7 @@ void ui_screen_sistema_show(void)
     lv_obj_set_style_pad_row(scroll, 8, 0);
     lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(scroll, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(scroll, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
     lv_obj_set_layout(scroll, LV_LAYOUT_FLEX);
     lv_obj_set_style_flex_flow(scroll, LV_FLEX_FLOW_COLUMN, 0);
 
