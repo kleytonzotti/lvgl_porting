@@ -303,16 +303,42 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     app_dash_minmax_update((float)rpm, (float)speed_kph, (float)map_kpa, (float)tps_pct,
                           (float)ect_c, (float)iat_c, batt_v, afr);
 
+    // Deduplicacao de atualizacoes numericas: so reescreve labels se o valor
+    // mudou de forma significativa. Evita flickering por invalidacao continua.
     if (s_arc_rpm) animate_arc_to(s_arc_rpm, rpm);   // layout Grid (lv_arc)
     update_dial_needle(s_dial_rpm, s_needle_rpm, rpm);            // Classico/Duplo, Estilo Classico
     update_dial_needle(s_dial_speed, s_needle_speed, speed_kph);  // Duplo, Estilo Classico
-    if (s_lbl_rpm)   lv_label_set_text_fmt(s_lbl_rpm,   "%ld", (long)rpm);
-    if (s_lbl_speed) lv_label_set_text_fmt(s_lbl_speed, "%ld", (long)speed_kph);
+
+    // RPM: so atualiza se mudou mais de 5 rpm (rejeita noise de 1-2 rpm)
+    if (s_lbl_rpm) {
+        static int32_t s_last_rpm = -9999;
+        if (rpm != s_last_rpm && (rpm - s_last_rpm > 5 || s_last_rpm - rpm > 5)) {
+            s_last_rpm = rpm;
+            lv_label_set_text_fmt(s_lbl_rpm, "%ld", (long)rpm);
+        } else {
+            s_last_rpm = rpm;
+        }
+    }
+
+    // Speed: so atualiza se mudou mais de 1 km/h
+    if (s_lbl_speed) {
+        static int32_t s_last_speed = -9999;
+        if (speed_kph != s_last_speed) {
+            s_last_speed = speed_kph;
+            lv_label_set_text_fmt(s_lbl_speed, "%ld", (long)speed_kph);
+        } else {
+            s_last_speed = speed_kph;
+        }
+    }
+
+    // TPS/MAP: atualizar sempre (estes mudam mais lentamente)
     if (s_bar_tps)   lv_bar_set_value(s_bar_tps, tps_pct, LV_ANIM_OFF);
     if (s_lbl_map)   lv_label_set_text_fmt(s_lbl_map,  "%ld kPa", (long)map_kpa);
     if (s_lbl_tps)   lv_label_set_text_fmt(s_lbl_tps,  "%ld%%", (long)tps_pct);
-    if (s_lbl_ect)  lv_label_set_text_fmt(s_lbl_ect,  "%ld C", (long)ect_c);
     if (s_lbl_batt)  lv_label_set_text_fmt(s_lbl_batt, "%.1fV", batt_v);
+
+    // ECT: atualizar sempre (ja tem dedup de cor abaixo)
+    if (s_lbl_ect)  lv_label_set_text_fmt(s_lbl_ect,  "%ld C", (long)ect_c);
 
     // Cor do ECT: verde < 90 C, amarelo 90-105 C, vermelho > 105 C.
     // So atualiza se a cor mudou — evita invalidacao desnecessaria que causa
