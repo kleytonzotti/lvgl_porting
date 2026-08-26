@@ -72,16 +72,17 @@ static void lvgl_diag_timer_cb(lv_timer_t *timer)
     // sizeof(StackType_t) = 4 no ESP32-S3.
     uint32_t stack_free = uxTaskGetStackHighWaterMark(NULL) * 4u;
 
-    ESP_LOGI(TAG, "[DIAG-LVGL-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
-             "vsync_ms=%-4lu | lento=%lu | heap=%u | psram=%u | stack_free=%uB",
-             (unsigned long)lv_tick_get(),
-             (unsigned long)now,
-             (unsigned long)(now - last),
-             (unsigned long)s_flush_wait_ms,
-             (unsigned long)s_flush_slow_count,
-             (unsigned)esp_get_free_heap_size(),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-             (unsigned)stack_free);
+    // DEBUG LVGL: Desativado — diagnóstico de performance da task (renders, heap, stack)
+    // ESP_LOGI(TAG, "[DIAG-LVGL-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
+    //          "vsync_ms=%-4lu | lento=%lu | heap=%u | psram=%u | stack_free=%uB",
+    //          (unsigned long)lv_tick_get(),
+    //          (unsigned long)now,
+    //          (unsigned long)(now - last),
+    //          (unsigned long)s_flush_wait_ms,
+    //          (unsigned long)s_flush_slow_count,
+    //          (unsigned)esp_get_free_heap_size(),
+    //          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+    //          (unsigned)stack_free);
     last = now;
 }
 
@@ -152,22 +153,23 @@ static void monitor_task(void *arg)
         uint32_t delta = now - last;
         bool     stuck = s_flush_in_progress;
 
-        ESP_LOGI(TAG, "[MON-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
-                 "flush_travado=%s | heap=%u | psram=%u",
-                 (unsigned long)lv_tick_get(),
-                 (unsigned long)now,
-                 (unsigned long)delta,
-                 stuck ? "SIM !!!" : "nao",
-                 (unsigned)esp_get_free_heap_size(),
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        // DEBUG LVGL: Desativado — monitoramento de performance (frames, heap, travamento)
+        // ESP_LOGI(TAG, "[MON-TASK] tick=%-8lu | renders=%-4lu (+%lu/3s) | "
+        //          "flush_travado=%s | heap=%u | psram=%u",
+        //          (unsigned long)lv_tick_get(),
+        //          (unsigned long)now,
+        //          (unsigned long)delta,
+        //          stuck ? "SIM !!!" : "nao",
+        //          (unsigned)esp_get_free_heap_size(),
+        //          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
         if (delta == 0 && lv_tick_get() > 5000) {
-            ESP_LOGE(TAG, "[MON-TASK] No render in 3s; LVGL task may be blocked");
+            // ESP_LOGE(TAG, "[MON-TASK] No render in 3s; LVGL task may be blocked");
         }
         if (stuck) {
             uint32_t wait = (uint32_t)lv_tick_get() - s_flush_tick_start;
-            ESP_LOGE(TAG, "[MON-TASK] Flush wait active for %lums",
-                     (unsigned long)wait);
+            // ESP_LOGE(TAG, "[MON-TASK] Flush wait active for %lums",
+            //          (unsigned long)wait);
         }
 
         last = now;

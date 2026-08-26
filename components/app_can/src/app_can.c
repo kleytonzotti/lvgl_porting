@@ -307,10 +307,9 @@ static void obd2_decode_frame_locked(const twai_message_t *msg, uint32_t now_ms)
     s_obd2_data.last_rx_ms = now_ms;
     s_obd2_data.valid      = true;
 
-    // DEBUG: Desativado por padrão — para ativar, descomente:
-    // ESP_LOGI(TAG, "[OBD2-RX] PID=0x%02X A=%.0f B=%.0f | rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
-    //          pid, A, B, s_obd2_data.rpm, s_obd2_data.speed_kph, s_obd2_data.ect_c,
-    //          s_obd2_data.iat_c, s_obd2_data.map_kpa, s_obd2_data.tps_pct, s_obd2_data.batt_v);
+    ESP_LOGI(TAG, "[OBD2-RX] PID=0x%02X A=%.0f B=%.0f | rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
+             pid, A, B, s_obd2_data.rpm, s_obd2_data.speed_kph, s_obd2_data.ect_c,
+             s_obd2_data.iat_c, s_obd2_data.map_kpa, s_obd2_data.tps_pct, s_obd2_data.batt_v);
 }
 
 // Um pedido por período, em round robin, e invalidação do snapshot quando o
@@ -326,9 +325,8 @@ static void obd2_poll_step(uint32_t now_ms)
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_obd2_data.valid && (now_ms - s_obd2_data.last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
-        // DEBUG: Desativado — timeout de 2s sem resposta OBD2, marcando inválido
-        // ESP_LOGW(TAG, "[OBD2-STALE] Sem resposta por %ldms, marcando dados como inválidos",
-        //          (long)(now_ms - s_obd2_data.last_rx_ms));
+        ESP_LOGW(TAG, "[OBD2-STALE] Sem resposta por %ldms, marcando dados como inválidos",
+                 (long)(now_ms - s_obd2_data.last_rx_ms));
         s_obd2_data.valid = false;
     }
     xSemaphoreGive(s_lock);
@@ -337,8 +335,7 @@ static void obd2_poll_step(uint32_t now_ms)
     last_req_ms = now_ms;
 
     uint8_t pid = k_obd2_pids[req_idx];
-    // DEBUG: Desativado — requisição OBD2 a cada 150ms
-    // ESP_LOGI(TAG, "[OBD2-TX] Requisição %d/%d: PID=0x%02X", req_idx + 1, APP_CAN_OBD2_PID_COUNT, pid);
+    ESP_LOGI(TAG, "[OBD2-TX] Requisição %d/%d: PID=0x%02X", req_idx + 1, APP_CAN_OBD2_PID_COUNT, pid);
     app_can_obd2_request_pid(pid);
     req_idx = (req_idx + 1) % APP_CAN_OBD2_PID_COUNT;
 }
@@ -867,9 +864,8 @@ esp_err_t app_can_obd2_set_active(bool enable)
     xSemaphoreGive(s_lock);
 
     s_rx_paused = false;
-    // DEBUG: Desativado — OBD2 ativado/desativado, troca de modo TWAI
-    // ESP_LOGI(TAG, "[OBD2] Ativação=%d | Modo TWAI=%s | Driver=%d | Sniffer=OFF durante OBD2",
-    //          enable, enable ? "NORMAL (TRANSMITE PIDs)" : "LISTEN_ONLY (SO ESCUTA)", s_driver_started);
+    ESP_LOGI(TAG, "[OBD2] Ativação=%d | Modo TWAI=%s | Driver=%d | Sniffer=OFF durante OBD2",
+             enable, enable ? "NORMAL (TRANSMITE PIDs)" : "LISTEN_ONLY (SO ESCUTA)", s_driver_started);
     return ESP_OK;
 }
 
@@ -891,26 +887,23 @@ void app_can_obd2_get_data(app_can_obd2_data_t *out)
     // OBD2 desligado ou a task parada (aí obd2_poll_step não roda).
     uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     if (out->valid && (now_ms - out->last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
-        // DEBUG: Desativado — dados ficaram stale (silence > 2s)
-        // ESP_LOGW(TAG, "[OBD2-GET] Dados ficaram stale durante leitura (silence=%ldms)",
-        //          (long)(now_ms - out->last_rx_ms));
+        ESP_LOGW(TAG, "[OBD2-GET] Dados ficaram stale durante leitura (silence=%ldms)",
+                 (long)(now_ms - out->last_rx_ms));
         out->valid = false;
     }
 
-    // DEBUG: Desativado — leitura periódica de snapshot OBD2 (dashboard/decoder)
-    // static uint32_t last_debug_ms = 0;
-    // if (out->valid && (now_ms - last_debug_ms) >= 1000) {
-    //     last_debug_ms = now_ms;
-    //     ESP_LOGI(TAG, "[OBD2-GET] rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
-    //              out->rpm, out->speed_kph, out->ect_c, out->iat_c, out->map_kpa, out->tps_pct, out->batt_v);
-    // }
+    static uint32_t last_debug_ms = 0;
+    if (out->valid && (now_ms - last_debug_ms) >= 1000) {
+        last_debug_ms = now_ms;
+        ESP_LOGI(TAG, "[OBD2-GET] rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
+                 out->rpm, out->speed_kph, out->ect_c, out->iat_c, out->map_kpa, out->tps_pct, out->batt_v);
+    }
 }
 
 esp_err_t app_can_obd2_request_pid(uint8_t pid)
 {
     if (!s_obd2_active || !s_driver_started) {
-        // DEBUG: Desativado — tentativa de TX com OBD2 inativo
-        // ESP_LOGW(TAG, "[OBD2-TX] Ignorado: ativo=%d started=%d", s_obd2_active, s_driver_started);
+        ESP_LOGW(TAG, "[OBD2-TX] Ignorado: ativo=%d started=%d", s_obd2_active, s_driver_started);
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -923,9 +916,8 @@ esp_err_t app_can_obd2_request_pid(uint8_t pid)
     for (int i = 3; i < 8; i++) msg.data[i] = 0x55;   // padding padrao ISO 15765
 
     esp_err_t err = twai_transmit(&msg, pdMS_TO_TICKS(50));
-    // DEBUG: Desativado — erro ao transmitir frame OBD2
-    // if (err != ESP_OK) {
-    //     ESP_LOGW(TAG, "[OBD2-TX] Falha ao transmitir PID 0x%02X: err=%d", pid, err);
-    // }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "[OBD2-TX] Falha ao transmitir PID 0x%02X: err=%d", pid, err);
+    }
     return err;
 }
