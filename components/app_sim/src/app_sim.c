@@ -1,5 +1,6 @@
 #include "app_sim.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -143,27 +144,34 @@ static void sim_tick(void)
     advance_phase_if_needed();
     phase_def_t def = phase_def(s_phase);
 
-    // Suavização exponencial com rampa de transição — dinamômetro realista.
-    // Calcula a taxa de mudança esperada para uma transição suave:
-    //   - Aceleração: ~1500 RPM/s (forte)
-    //   - Desaceleração: ~800 RPM/s (motor resistindo)
-    //   - Mudanças leves: ~300 RPM/s
+    // Rampa de transição suave com zona morta anti-oscilação.
+    // Evita overshoot ao aplicar desaceleração gradual e "chegada suave"
+    // quando está próximo do target.
 
     float rpm_delta = def.rpm_target - s_rpm_f;
-    float rpm_accel_rate = (rpm_delta > 0) ? 50.0f : 26.0f;   // accel mais rápido que decel (33ms * taxa)
 
-    // Limita a taxa de mudança de RPM por frame (mais realista que exponencial puro)
-    if (rpm_delta > rpm_accel_rate) {
-        s_rpm_f += rpm_accel_rate;
-    } else if (rpm_delta < -rpm_accel_rate) {
-        s_rpm_f -= rpm_accel_rate;
+    // Taxa de mudança: aceleração mais forte que desaceleração (física real)
+    float rpm_rate = (rpm_delta > 0) ? 32.0f : 18.0f;
+
+    // Zona morta: se está muito próximo do target, vai suavemente
+    if (fabsf(rpm_delta) < 80.0f) {
+        // Perto do target: reduz taxa para evitar overshoot e oscilar
+        rpm_rate *= 0.4f;
+    }
+
+    // Aplica a mudança
+    if (rpm_delta > rpm_rate) {
+        s_rpm_f += rpm_rate;
+    } else if (rpm_delta < -rpm_rate) {
+        s_rpm_f -= rpm_rate;
     } else {
+        // Chegou no target: para por aqui
         s_rpm_f = def.rpm_target;
     }
 
-    // Throttle responde mais rápido que RPM (é um comando direto)
+    // Throttle: responde mais rápido (é comando direto do pedal)
     float thr_delta = def.throttle_target - s_throttle_f;
-    float thr_rate = 6.0f;   // mais rápido (6 pontos de % por frame)
+    float thr_rate = (fabsf(thr_delta) < 15.0f) ? 2.0f : 4.0f;   // mais lento perto do target
     if (thr_delta > thr_rate) {
         s_throttle_f += thr_rate;
     } else if (thr_delta < -thr_rate) {
@@ -172,11 +180,11 @@ static void sim_tick(void)
         s_throttle_f = def.throttle_target;
     }
 
+    // Velocidade: segue RPM com inércia (não oscila)
     float speed_target = clampf(s_rpm_f / (float)s_redline_rpm * 220.0f, 0.0f, 220.0f);
     s_speed_prev = s_speed_f;
-    // Speed segue o RPM, mas com menor taxa de mudança (inércia + troca de marcha)
     float speed_delta = speed_target - s_speed_f;
-    float speed_rate = 1.5f;   // mais lento que RPM
+    float speed_rate = 0.8f;   // mais lento que RPM, suave
     if (speed_delta > speed_rate) {
         s_speed_f += speed_rate;
     } else if (speed_delta < -speed_rate) {
