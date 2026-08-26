@@ -163,13 +163,6 @@ void ui_screen_pedal_show(void)
     lv_obj_set_style_text_color(s_lbl_link, ZOTTI_RED, 0);
     lv_obj_align(s_lbl_link, LV_ALIGN_LEFT_MID, 15, 0);
 
-    // Aviso: link UART desligado de proposito (conflito de pino, ver ROADMAP.md SS5).
-    lv_obj_t *lbl_warn = lv_label_create(status_bar);
-    lv_label_set_text(lbl_warn, LV_SYMBOL_WARNING " UART desligada — conflito de pino (ROADMAP.md SS5)");
-    lv_obj_set_style_text_font(lbl_warn, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(lbl_warn, ZOTTI_YELLOW, 0);
-    lv_obj_align(lbl_warn, LV_ALIGN_RIGHT_MID, -15, 0);
-
     // Leituras: pedal real x saida enviada a ECU.
     lv_obj_t *readings = lv_obj_create(scr);
     lv_obj_set_size(readings, 800, 100);
@@ -201,14 +194,8 @@ void ui_screen_pedal_show(void)
     s_lbl_fault = lv_label_create(fault_card);
     lv_label_set_text(s_lbl_fault, "Nenhuma");
     lv_obj_set_style_text_font(s_lbl_fault, ZOTTI_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(s_lbl_fault, ZOTTI_GREEN, 0);
+    lv_obj_set_style_text_color(s_lbl_fault, ZOTTI_GRAY, 0);
     lv_obj_align(s_lbl_fault, LV_ALIGN_CENTER, 0, 5);
-
-    s_lbl_frames = lv_label_create(fault_card);
-    lv_label_set_text(s_lbl_frames, "OK:0  Chk.invalido:0");
-    lv_obj_set_style_text_font(s_lbl_frames, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(s_lbl_frames, ZOTTI_GRAY, 0);
-    lv_obj_align(s_lbl_frames, LV_ALIGN_BOTTOM_MID, 0, -8);
 
     // Selecao de modo.
     lv_obj_t *lbl_mode_title = lv_label_create(scr);

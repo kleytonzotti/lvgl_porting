@@ -15,8 +15,6 @@
 
 static const char *TAG = "APP_SIM";
 
-// Fases de um ciclo de condução simulado — só existem pra dar variação
-// realista ao demo, não representam nada físico de verdade.
 typedef enum {
     PHASE_IDLE = 0,
     PHASE_ACCEL,
@@ -76,10 +74,10 @@ static void update_demo_from_clock_locked(void)
 
     float rpm, speed, tps, accel;
     if (t < 0.5f) {
-        rpm = 900.0f; speed = 0.0f; tps = 2.0f; accel = 0.0f;
+        rpm = 800.0f; speed = 0.0f; tps = 2.0f; accel = 0.0f;
     } else if (t < 8.5f) {
         float p = (t - 0.5f) / 8.0f;
-        rpm = 900.0f + p * (float)s_redline_rpm * 0.78f;
+        rpm = 800.0f + p * (float)s_redline_rpm * 0.78f;
         speed = p * 135.0f; tps = 86.0f; accel = 0.34f;
     } else if (t < 14.0f) {
         rpm = (float)s_redline_rpm * 0.48f + noise(120.0f);
@@ -94,7 +92,7 @@ static void update_demo_from_clock_locked(void)
         rpm = (float)s_redline_rpm * (0.68f * (1.0f - p)) + 900.0f;
         speed = 154.0f * (1.0f - p) + 12.0f; tps = 0.0f; accel = -0.22f;
     } else {
-        rpm = 900.0f; speed = 12.0f; tps = 3.0f; accel = -0.03f;
+        rpm = 800.0f; speed = 12.0f; tps = 3.0f; accel = -0.03f;
     }
 
     s_data.rpm          = (uint16_t)clampf(rpm, 0.0f, (float)s_redline_rpm);
