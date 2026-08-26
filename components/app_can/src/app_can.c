@@ -289,10 +289,11 @@ static void obd2_decode_frame_locked(const twai_message_t *msg, uint32_t now_ms)
     if (msg->identifier != APP_CAN_OBD2_RESP_ID) return;
     if (msg->data_length_code < 5 || msg->data[1] != 0x41) return;
 
+    uint8_t pid = msg->data[2];
     float A = (float)msg->data[3];
     float B = (float)msg->data[4];
 
-    switch (msg->data[2]) {
+    switch (pid) {
     case 0x0C: s_obd2_data.rpm       = (int32_t)((A * 256.0f + B) / 4.0f);   break;
     case 0x0D: s_obd2_data.speed_kph = (int32_t)A;                            break;
     case 0x05: s_obd2_data.ect_c     = (int32_t)(A - 40.0f);                  break;
@@ -305,6 +306,10 @@ static void obd2_decode_frame_locked(const twai_message_t *msg, uint32_t now_ms)
 
     s_obd2_data.last_rx_ms = now_ms;
     s_obd2_data.valid      = true;
+
+    ESP_LOGI(TAG, "[OBD2-RX] PID=0x%02X A=%.0f B=%.0f | rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
+             pid, A, B, s_obd2_data.rpm, s_obd2_data.speed_kph, s_obd2_data.ect_c,
+             s_obd2_data.iat_c, s_obd2_data.map_kpa, s_obd2_data.tps_pct, s_obd2_data.batt_v);
 }
 
 // Um pedido por período, em round robin, e invalidação do snapshot quando o
@@ -320,6 +325,8 @@ static void obd2_poll_step(uint32_t now_ms)
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_obd2_data.valid && (now_ms - s_obd2_data.last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+        ESP_LOGW(TAG, "[OBD2-STALE] Sem resposta por %ldms, marcando dados como inválidos",
+                 (long)(now_ms - s_obd2_data.last_rx_ms));
         s_obd2_data.valid = false;
     }
     xSemaphoreGive(s_lock);
@@ -327,7 +334,9 @@ static void obd2_poll_step(uint32_t now_ms)
     if ((now_ms - last_req_ms) < APP_CAN_OBD2_REQ_PERIOD_MS) return;
     last_req_ms = now_ms;
 
-    app_can_obd2_request_pid(k_obd2_pids[req_idx]);
+    uint8_t pid = k_obd2_pids[req_idx];
+    ESP_LOGI(TAG, "[OBD2-TX] Requisição %d/%d: PID=0x%02X", req_idx + 1, APP_CAN_OBD2_PID_COUNT, pid);
+    app_can_obd2_request_pid(pid);
     req_idx = (req_idx + 1) % APP_CAN_OBD2_PID_COUNT;
 }
 
@@ -855,8 +864,8 @@ esp_err_t app_can_obd2_set_active(bool enable)
     xSemaphoreGive(s_lock);
 
     s_rx_paused = false;
-    ESP_LOGW(TAG, "OBD2 ativo=%d — TWAI agora em modo %s",
-             enable, enable ? "NORMAL (transmite)" : "LISTEN_ONLY (so escuta)");
+    ESP_LOGI(TAG, "[OBD2] Ativação=%d | Modo TWAI=%s | Driver=%d | Sniffer=OFF durante OBD2",
+             enable, enable ? "NORMAL (TRANSMITE PIDs)" : "LISTEN_ONLY (SO ESCUTA)", s_driver_started);
     return ESP_OK;
 }
 
@@ -878,13 +887,25 @@ void app_can_obd2_get_data(app_can_obd2_data_t *out)
     // OBD2 desligado ou a task parada (aí obd2_poll_step não roda).
     uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     if (out->valid && (now_ms - out->last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+        ESP_LOGW(TAG, "[OBD2-GET] Dados ficaram stale durante leitura (silence=%ldms)",
+                 (long)(now_ms - out->last_rx_ms));
         out->valid = false;
+    }
+
+    static uint32_t last_debug_ms = 0;
+    if (out->valid && (now_ms - last_debug_ms) >= 1000) {
+        last_debug_ms = now_ms;
+        ESP_LOGI(TAG, "[OBD2-GET] rpm=%ld spd=%ld ect=%ld iat=%ld map=%ld tps=%ld batt=%.2f",
+                 out->rpm, out->speed_kph, out->ect_c, out->iat_c, out->map_kpa, out->tps_pct, out->batt_v);
     }
 }
 
 esp_err_t app_can_obd2_request_pid(uint8_t pid)
 {
-    if (!s_obd2_active || !s_driver_started) return ESP_ERR_INVALID_STATE;
+    if (!s_obd2_active || !s_driver_started) {
+        ESP_LOGW(TAG, "[OBD2-TX] Ignorado: ativo=%d started=%d", s_obd2_active, s_driver_started);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     twai_message_t msg = {0};
     msg.identifier       = 0x7DF;   // ID de broadcast padrao Mode 01 (SAE J1979)
@@ -894,5 +915,9 @@ esp_err_t app_can_obd2_request_pid(uint8_t pid)
     msg.data[2] = pid;
     for (int i = 3; i < 8; i++) msg.data[i] = 0x55;   // padding padrao ISO 15765
 
-    return twai_transmit(&msg, pdMS_TO_TICKS(50));
+    esp_err_t err = twai_transmit(&msg, pdMS_TO_TICKS(50));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "[OBD2-TX] Falha ao transmitir PID 0x%02X: err=%d", pid, err);
+    }
+    return err;
 }
