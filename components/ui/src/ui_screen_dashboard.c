@@ -237,6 +237,27 @@ static void update_grid_tiles(float speed, float map_kpa, float tps, float ect,
     }
 }
 
+static void reset_dashboard_values(void)
+{
+    if (s_arc_rpm) animate_arc_to(s_arc_rpm, 0);
+    update_dial_needle(s_dial_rpm, s_needle_rpm, 0);
+    update_dial_needle(s_dial_speed, s_needle_speed, 0);
+    if (s_lbl_rpm) lv_label_set_text(s_lbl_rpm, "0");
+    if (s_lbl_speed) lv_label_set_text(s_lbl_speed, "---");
+    if (s_bar_tps) lv_bar_set_value(s_bar_tps, 0, LV_ANIM_OFF);
+    if (s_lbl_map) lv_label_set_text(s_lbl_map, "---");
+    if (s_lbl_tps) lv_label_set_text(s_lbl_tps, "---");
+    if (s_lbl_ect) lv_label_set_text(s_lbl_ect, "---");
+    if (s_lbl_batt) lv_label_set_text(s_lbl_batt, "---");
+    if (s_lbl_gmeter) lv_label_set_text(s_lbl_gmeter, "+0.00 G");
+    if (s_bar_gmeter) lv_bar_set_value(s_bar_gmeter, 0, LV_ANIM_OFF);
+    update_shift_bar(0, s_active_profile.redline_rpm);
+    set_redline_active(false);
+    for (int i = 0; i < GRID_CH_COUNT; i++) {
+        if (s_grid_val[i]) lv_label_set_text(s_grid_val[i], "---");
+    }
+}
+
 // Atualiza os dados da dashboard. accel_g vem do app_sim (demo) ou é 0 pra
 // dados reais do app_ecu ainda (o protocolo v1 do app_ecu não manda
 // aceleração — ver ROADMAP.md se isso precisar entrar no futuro).
@@ -315,7 +336,10 @@ static void update_timer_cb(lv_timer_t *timer)
 
     app_ecu_data_t d;
     app_ecu_get_data(&d);
-    if (!d.valid) return;
+    if (!d.valid) {
+        reset_dashboard_values();
+        return;
+    }
 
     ui_screen_dashboard_update(d.rpm, 0, d.map_kpa, d.tps_pct,
                                d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, 0.0f);
@@ -358,6 +382,7 @@ static void demo_toggle_cb(lv_event_t *e)
     app_sim_set_enabled(enable);
     app_sim_set_redline(s_active_profile.redline_rpm);
     lv_obj_set_style_bg_color(btn, enable ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+    update_timer_cb(NULL);
 }
 
 // Callback voltar ao menu.

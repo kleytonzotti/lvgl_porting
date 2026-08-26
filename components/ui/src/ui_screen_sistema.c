@@ -135,9 +135,12 @@ void ui_screen_sistema_show(void)
     lv_obj_set_size(scroll, 800, 440);
     lv_obj_set_pos(scroll, 0, 40);
     lv_obj_set_style_bg_color(scroll, ZOTTI_BG, 0);
+    lv_obj_set_style_bg_opa(scroll, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(scroll, 0, 0);
     lv_obj_set_style_pad_all(scroll, 20, 0);
     lv_obj_set_style_pad_row(scroll, 8, 0);
+    lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(scroll, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_layout(scroll, LV_LAYOUT_FLEX);
     lv_obj_set_style_flex_flow(scroll, LV_FLEX_FLOW_COLUMN, 0);
 

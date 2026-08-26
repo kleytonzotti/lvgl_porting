@@ -10,6 +10,8 @@
 
 static const char *TAG = "UI_ECU";
 
+static void update_values(lv_timer_t *timer);
+
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
 static void demo_toggle_cb(lv_event_t *e)
@@ -18,6 +20,7 @@ static void demo_toggle_cb(lv_event_t *e)
     app_sim_set_enabled(enable);
     lv_obj_set_style_bg_color(lv_event_get_target(e),
                               enable ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+    update_values(NULL);
 }
 
 // Sensores recebidos via BLE da ECU externa.
@@ -116,7 +119,12 @@ static void update_values(lv_timer_t *timer)
 
     app_ecu_data_t d;
     app_ecu_get_data(&d);
-    if (!d.valid) return;
+    if (!d.valid) {
+        for (int i = 0; i < SENS_COUNT; i++) {
+            set_val_text(i, "---");
+        }
+        return;
+    }
 
     set_val_text(SENS_RPM,    "%u rpm",   (unsigned)d.rpm);
     set_val_text(SENS_MAP,    "%u kPa",   (unsigned)d.map_kpa);
