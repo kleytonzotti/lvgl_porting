@@ -13,7 +13,13 @@ Porting do LVGL 9 para o display Waveshare ESP32-S3-Touch-LCD-4.3B (módulo ESP3
 ## Toolchain
 
 - ESP-IDF: **v5.5.4** (target `esp32s3`)
-- Build/flash feito pela extensão ESP-IDF do VSCode (`idf.currentSetup` em [.vscode/settings.json](.vscode/settings.json)); `idf.py` não está disponível como CLI solto neste ambiente — use sempre os comandos da extensão (Reconfigure / Build / Flash / Monitor).
+- Build/flash pela extensão ESP-IDF do VSCode (`idf.currentSetup` em [.vscode/settings.json](.vscode/settings.json)) — Reconfigure / Build / Flash / Monitor.
+- O `idf.py` também funciona no terminal, mas **só depois de carregar o ambiente** (ele não está no PATH por padrão):
+  ```bash
+  source /home/zotti/.espressif/v5.5.4/esp-idf/export.sh
+  idf.py build
+  ```
+  Útil pra validar uma alteração sem abrir a extensão. Flash/monitor continuam mais práticos pela extensão, que já sabe a porta.
 - Porta serial: configurada em `idf.port` (`.vscode/settings.json`) — ajuste para a porta do seu SO (`/dev/ttyACM0` no Linux, `COMx` no Windows).
 
 ## Configuração obrigatória (sdkconfig)

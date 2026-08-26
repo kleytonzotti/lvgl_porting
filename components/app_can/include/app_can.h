@@ -113,12 +113,41 @@ esp_err_t app_can_sd_async_get_last_err(void);
 // não só escutar. Desligar volta pro LISTEN_ONLY. O sniffer continua
 // funcionando normalmente nos dois modos (a diferença é só a capacidade
 // de transmitir).
+//
+// Enquanto ativo, o PRÓPRIO componente pede os PIDs da tabela do ROADMAP.md
+// §6 em round robin e decodifica as respostas na task de captura — não
+// depende de nenhuma tela estar aberta. Quem quiser os valores lê o
+// snapshot com app_can_obd2_get_data(). Ativar também liga a recepção
+// mesmo sem o sniffer/log rodando (app_can_sniffer_start não é necessário).
 esp_err_t app_can_obd2_set_active(bool enable);
 bool      app_can_obd2_is_active(void);
 
+// Snapshot decodificado dos PIDs Mode 01 (ROADMAP.md §6). "valid" só é
+// verdadeiro enquanto chegou pelo menos uma resposta nos últimos
+// APP_CAN_OBD2_STALE_MS — se o carro parar de responder (ignição
+// desligada, cabo solto), volta pra false sozinho em vez de congelar o
+// último valor na tela.
+#define APP_CAN_OBD2_STALE_MS  2000
+
+typedef struct {
+    bool     valid;
+    uint32_t last_rx_ms;   // tick ms da última resposta decodificada
+    int32_t  rpm;
+    int32_t  speed_kph;
+    int32_t  map_kpa;
+    int32_t  tps_pct;
+    int32_t  ect_c;
+    int32_t  iat_c;
+    float    batt_v;
+} app_can_obd2_data_t;
+
+// Cópia segura de chamar de qualquer task (inclusive a do LVGL).
+void app_can_obd2_get_data(app_can_obd2_data_t *out);
+
 // Manda uma requisição Mode 01 pro PID indicado (frame padrão de 8 bytes,
 // preenchido com 0x55 conforme convenção ISO 15765). Retorna
-// ESP_ERR_INVALID_STATE se o modo OBD2 não estiver ativo.
+// ESP_ERR_INVALID_STATE se o modo OBD2 não estiver ativo. Uso avulso: o
+// round robin dos PIDs padrão já roda sozinho enquanto o modo está ativo.
 esp_err_t app_can_obd2_request_pid(uint8_t pid);
 
 #ifdef __cplusplus

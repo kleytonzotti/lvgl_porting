@@ -45,7 +45,7 @@ não um acidente de arquitetura.
 | `ui_screen_ecu.c` | Tela "MONITOR ECU BLE" | Lê dados reais de `app_ecu` a cada 300ms (antes só mostrava "---") |
 | `ui_screen_dashboard.c` | Dashboard | 4 modelos de tela (Classic/Race/Grid/Duplo), config única persistida em NVS (editada em Configurações), efeito de "perto do corte", modo Demo, cor do acento do RPM (Grid) — ver §10 |
 | `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
-| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_can_obd2_set_active` — ver §6 |
+| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_can_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_can` (§6) |
 | `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
 
 ### Código morto removido
@@ -164,12 +164,30 @@ carro de fábrica), não conflita com o app_ecu.
 **Implementado**: `app_can_obd2_set_active()`/`app_can_obd2_request_pid()`
 em `components/app_can/` — reinstala o driver TWAI em `TWAI_MODE_NORMAL`
 (transmite) quando ligado, volta pro `TWAI_MODE_LISTEN_ONLY` padrão quando
-desligado. A aba "Decoder" da tela CAN (`ui_screen_can.c`) tem o botão
-liga/desliga e mostra os 7 PIDs da tabela acima, pedidos em round robin
-(um a cada 300ms) e decodificados da resposta em `0x7E8`. **Desligado por
-padrão** — precisa apertar "Ativar OBD2" explicitamente; até lá o painel
-continua só escutando, igual ao sniffer. Não testado em hardware real
-ainda (precisa do Vectra com ignição ligada respondendo Mode 01).
+desligado. **Desligado por padrão** — precisa ser ligado explicitamente
+(botão "Ativar OBD2" na aba Decoder da tela CAN, ou o botão "CAN" do
+dashboard); até lá o painel continua só escutando, igual ao sniffer. Não
+testado em hardware real ainda (precisa do Vectra com ignição ligada
+respondendo Mode 01).
+
+**O round robin e a decodificação moram no `app_can`, não na UI** (mudou
+nesta rodada — antes era um `lv_timer` dentro do `ui_screen_can.c`). Com o
+modo ativo, a própria task de captura pede um PID a cada 150ms e decodifica
+as respostas de `0x7E8` num snapshot (`app_can_obd2_get_data()`, struct
+`app_can_obd2_data_t`). Três consequências que motivaram a mudança:
+1. O dado continua vivo com a tela do CAN **fechada** — é o que permite o
+   dashboard consumir OBD2 (§10).
+2. Um único round robin no barramento, não um por tela aberta.
+3. `valid` cai sozinho depois de `APP_CAN_OBD2_STALE_MS` (2s) sem resposta,
+   em vez de congelar o último valor lido como se ainda fosse atual.
+
+A recepção agora roda com o sniffer parado, se o OBD2 estiver ativo — a
+task usa o gate `s_rx_paused || (!s_running && !s_obd2_active)`. Com só o
+OBD2 ligado, a tabela por ID e os contadores do sniffer **não** são
+alimentados (não faria sentido inflá-los sem sessão de captura), mas a
+resposta `0x7E8` é decodificada **antes** do filtro de software do sniffer
+— o filtro é sobre o que se quer logar, não pode calar a fonte do
+dashboard.
 
 ## 7. Hardware da ECU programável — pontos de partida (pesquisa)
 
@@ -244,8 +262,36 @@ perfil em cima disso):
 - Cartões de sensor hoje mostram TPS/ECT/BATERIA (AFR/IAT saíram — decisão
   já tomada antes desta sessão, não mexi nisso).
 
+**Fonte de dados do dashboard** — o cabeçalho tem dois botões à direita
+(`dash_src_t` em `ui_screen_dashboard.c`), e as três fontes são mutuamente
+exclusivas (um enum, não dois booleanos soltos — não existe "Demo e CAN ao
+mesmo tempo"):
+
+| Botão | Fonte | Componente | Escuta ou fala? |
+|---|---|---|---|
+| nenhum aceso | ECU programável por BLE (padrão) | `app_ecu` | só escuta |
+| "Demo" (amarelo) | simulador local | `app_sim` | nada no barramento |
+| "CAN" (vermelho) | OBD2 Mode 01 do carro de fábrica | `app_can` (§6) | **transmite** |
+
+O botão CAN é vermelho de propósito: é a única fonte em que o painel
+**transmite** no barramento (driver TWAI em `NORMAL`). Sair do modo CAN
+devolve o TWAI pro `LISTEN_ONLY`. Diferente do BLE da ECU, o OBD2 traz
+velocidade de verdade (PID `0x0D`); em compensação, esta tabela de PIDs não
+tem lambda/AFR nem aceleração — vão zerados na `ui_screen_dashboard_update()`.
+
+Como `app_can`/`app_sim` também são ligados por **outras** telas (botão OBD2
+da tela CAN, botão Demo da tela da ECU), `s_source` é só uma preferência: a
+cada `ui_screen_dashboard_show()` ela é reconciliada com o estado real dos
+componentes (OBD2 ativo ganha; senão segue `app_sim_is_enabled()`). Sem
+isso, um botão daqui ficava aceso apontando pra uma fonte que já não existia.
+
+⚠️ `app_can_obd2_set_active()` reinstala o driver TWAI e espera 100ms —
+chamado da task do LVGL, trava a tela por esse tempo. Aceitável num toque
+deliberado de botão (é o mesmo custo que o botão da tela do CAN sempre
+pagou), mas **não** chame isso de dentro do timer de 33ms do dashboard.
+
 **Modo Demo** (`components/app_sim/`, completamente separado de
-`app_ecu`/`app_can` de propósito): botão "Demo" no cabeçalho do dashboard liga
+`app_ecu`/`app_can` de propósito): liga
 uma simulação de ciclo de condução (fases idle → aceleração → cruzeiro →
 perto do corte → desaceleração, com filtro passa-baixa pra suavizar) gerando
 RPM, velocidade, aceleração longitudinal estimada, MAP, TPS, ECT (aquece aos
@@ -309,7 +355,10 @@ display — ver skill `verify`/`run` pra isso).
    que o firmware da ECU definir o UUID do serviço/characteristic (§4).
 3. Retestar em hardware se o travamento do SD (§3) foi realmente resolvido.
 4. Testar o OBD2 ativo (§6) num carro de verdade — implementado mas nunca
-   rodou contra um Vectra respondendo Mode 01 de fato.
+   rodou contra um Vectra respondendo Mode 01 de fato. Agora dá pra testar
+   por dois caminhos: a aba Decoder da tela CAN (valores crus, PID a PID) e
+   o botão "CAN" do dashboard (§10). Vale conferir os dois, porque o
+   dashboard exercita o snapshot com a tela do CAN fechada.
 5. Projetar o hardware do módulo de pedal (schematic + PCB) com os chips
    automotivos de referência (§7) — H-bridge DRV8873-Q1 primeiro, por ser
    reaproveitável.

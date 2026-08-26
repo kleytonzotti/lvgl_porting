@@ -2,6 +2,7 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
+#include "app_can.h"
 #include "app_ecu.h"
 #include "app_sim.h"
 #include "app_dash_profile.h"
@@ -68,6 +69,26 @@ static bool        s_redline_active = false;
 
 static app_dash_profile_t s_active_profile;
 static int32_t             s_active_index = 0;
+
+// ─────────────────────────────────────────────────────
+// Fonte de dados do dashboard — as tres sao mutuamente exclusivas, por isso
+// uma variavel de estado em vez de dois booleanos independentes (ligar uma
+// desliga a outra sozinho, sem estado impossivel do tipo "Demo e CAN ao
+// mesmo tempo"). Vive fora da tela de proposito: sobrevive a troca de
+// Estilo/Layout, que reconstroi o dashboard inteiro.
+//
+//   ECU  — padrao. Telemetria BLE da ECU programavel (app_ecu).
+//   DEMO — simulador local (app_sim), sem hardware nenhum ligado.
+//   CAN  — OBD2 Mode 01 sobre o CAN do carro de fabrica (app_can,
+//          ROADMAP.md §6). ATENCAO: nesse modo o painel TRANSMITE
+//          requisicoes no barramento (driver TWAI em NORMAL), diferente
+//          dos outros dois, que so escutam.
+// ─────────────────────────────────────────────────────
+typedef enum { DASH_SRC_ECU = 0, DASH_SRC_DEMO, DASH_SRC_CAN } dash_src_t;
+
+static dash_src_t s_source    = DASH_SRC_ECU;
+static lv_obj_t  *s_btn_demo  = NULL;
+static lv_obj_t  *s_btn_can   = NULL;
 
 // ─────────────────────────────────────────────────────
 // Paleta de cor do acento do RPM por perfil (ROADMAP.md §12) — o campo
@@ -237,8 +258,17 @@ static void update_grid_tiles(float speed, float map_kpa, float tps, float ect,
     }
 }
 
+// Zera a tela quando a fonte nao tem dado valido. Guardado por s_blanked
+// porque o timer roda a 33ms: sem isso, uma fonte muda (ECU desconectada,
+// OBD2 sem resposta) reescrevia ~12 labels 30x por segundo, invalidando
+// area do painel RGB a toa pra desenhar sempre o mesmo "---".
+static bool s_blanked = false;
+
 static void reset_dashboard_values(void)
 {
+    if (s_blanked) return;
+    s_blanked = true;
+
     if (s_arc_rpm) animate_arc_to(s_arc_rpm, 0);
     update_dial_needle(s_dial_rpm, s_needle_rpm, 0);
     update_dial_needle(s_dial_speed, s_needle_speed, 0);
@@ -266,6 +296,8 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
                                  float afr, int32_t ect_c,
                                  int32_t iat_c, float batt_v, float accel_g)
 {
+    s_blanked = false;   // voltou a ter dado — o proximo silencio zera de novo
+
     // Mín/máx acompanha independente de qual layout está na tela (assim
     // como no Injepro, os recordes ficam guardados mesmo trocando de tela).
     app_dash_minmax_update((float)rpm, (float)speed_kph, (float)map_kpa, (float)tps_pct,
@@ -308,31 +340,52 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
 // Timer: escolhe a fonte de dados (demo ou ECU real) e atualiza a tela.
 // ─────────────────────────────────────────────────────
 
+static void set_status(const char *text, lv_color_t color)
+{
+    if (!s_lbl_status) return;
+    lv_label_set_text(s_lbl_status, text);
+    lv_obj_set_style_text_color(s_lbl_status, color, 0);
+}
+
 static void update_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
 
-    if (app_sim_is_enabled()) {
+    if (s_source == DASH_SRC_DEMO) {
         app_sim_data_t d;
         app_sim_get_data(&d);
-        if (s_lbl_status) {
-            lv_label_set_text(s_lbl_status, LV_SYMBOL_PLAY " DEMO ATIVO");
-            lv_obj_set_style_text_color(s_lbl_status, ZOTTI_YELLOW, 0);
-        }
+        set_status(LV_SYMBOL_PLAY " DEMO ATIVO", ZOTTI_YELLOW);
         ui_screen_dashboard_update(d.rpm, d.speed_kph, d.map_kpa, d.tps_pct,
                                    d.lambda * 14.7f, d.ect_c, d.iat_c, d.batt_v, d.accel_g);
         return;
     }
 
+    if (s_source == DASH_SRC_CAN) {
+        app_can_obd2_data_t d;
+        app_can_obd2_get_data(&d);
+        // Aviso permanente enquanto a fonte for CAN: aqui o painel nao esta
+        // so escutando, esta pedindo PID por PID no barramento.
+        set_status(d.valid ? LV_SYMBOL_WARNING " CAN/OBD2 lendo (transmitindo)"
+                           : LV_SYMBOL_WARNING " CAN/OBD2 sem resposta",
+                   d.valid ? ZOTTI_GREEN : ZOTTI_RED);
+        if (!d.valid) {
+            reset_dashboard_values();
+            return;
+        }
+        // Diferente do app_sim, o Mode 01 desta tabela de PIDs nao traz
+        // lambda/AFR nem aceleracao — vao zerados de proposito (ver a
+        // tabela do ROADMAP.md §6 pro que existe de verdade).
+        ui_screen_dashboard_update(d.rpm, d.speed_kph, d.map_kpa, d.tps_pct,
+                                   0.0f, d.ect_c, d.iat_c, d.batt_v, 0.0f);
+        return;
+    }
+
     app_ecu_status_t st;
     app_ecu_get_status(&st);
-    if (s_lbl_status) {
-        bool connected = (st.state == APP_ECU_STATE_CONNECTED);
-        lv_label_set_text(s_lbl_status, connected
-            ? LV_SYMBOL_BLUETOOTH " ECU Conectada"
-            : LV_SYMBOL_BLUETOOTH " ECU Desconectada");
-        lv_obj_set_style_text_color(s_lbl_status, connected ? ZOTTI_GREEN : ZOTTI_RED, 0);
-    }
+    bool connected = (st.state == APP_ECU_STATE_CONNECTED);
+    set_status(connected ? LV_SYMBOL_BLUETOOTH " ECU Conectada"
+                         : LV_SYMBOL_BLUETOOTH " ECU Desconectada",
+               connected ? ZOTTI_GREEN : ZOTTI_RED);
 
     app_ecu_data_t d;
     app_ecu_get_data(&d);
@@ -375,14 +428,64 @@ static lv_obj_t *create_sensor_card(lv_obj_t *parent, const char *label_text,
     return lbl_val;
 }
 
+// ─────────────────────────────────────────────────────
+// Troca de fonte de dados (botoes "Demo" e "CAN" do cabecalho).
+// ─────────────────────────────────────────────────────
+
+static void refresh_source_buttons(void)
+{
+    if (s_btn_demo) {
+        lv_obj_set_style_bg_color(s_btn_demo,
+            (s_source == DASH_SRC_DEMO) ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+    }
+    if (s_btn_can) {
+        // Vermelho, nao verde: o modo CAN transmite no barramento do carro.
+        lv_obj_set_style_bg_color(s_btn_can,
+            (s_source == DASH_SRC_CAN) ? ZOTTI_RED : ZOTTI_BG_CARD, 0);
+    }
+}
+
+static void set_source(dash_src_t src)
+{
+    if (src == s_source) return;
+
+    // Sair do modo CAN devolve o TWAI pro LISTEN_ONLY — o painel volta a so
+    // escutar assim que a fonte deixa de ser o OBD2.
+    // Aviso: app_can_obd2_set_active() reinstala o driver e espera 100ms
+    // com a task do LVGL parada. E o mesmo custo que o botao da tela do CAN
+    // ja paga; aceitavel num toque deliberado, mas nao chame isso de dentro
+    // do timer de 33ms.
+    if (s_source == DASH_SRC_CAN && app_can_obd2_is_active()) {
+        app_can_obd2_set_active(false);
+    }
+
+    if (src == DASH_SRC_CAN && !app_can_obd2_is_active()) {
+        esp_err_t err = app_can_obd2_set_active(true);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Nao foi possivel ativar o OBD2 (err=%d) — voltando pra ECU", (int)err);
+            src = DASH_SRC_ECU;
+        }
+    }
+
+    app_sim_set_enabled(src == DASH_SRC_DEMO);
+    if (src == DASH_SRC_DEMO) app_sim_set_redline(s_active_profile.redline_rpm);
+
+    s_source = src;
+    refresh_source_buttons();
+    reset_dashboard_values();
+    update_timer_cb(NULL);
+}
+
 static void demo_toggle_cb(lv_event_t *e)
 {
-    lv_obj_t *btn = lv_event_get_target(e);
-    bool enable = !app_sim_is_enabled();
-    app_sim_set_enabled(enable);
-    app_sim_set_redline(s_active_profile.redline_rpm);
-    lv_obj_set_style_bg_color(btn, enable ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
-    update_timer_cb(NULL);
+    LV_UNUSED(e);
+    set_source(s_source == DASH_SRC_DEMO ? DASH_SRC_ECU : DASH_SRC_DEMO);
+}
+
+static void can_toggle_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    set_source(s_source == DASH_SRC_CAN ? DASH_SRC_ECU : DASH_SRC_CAN);
 }
 
 // Callback voltar ao menu.
@@ -408,9 +511,13 @@ static void reset_optional_widget_refs(void)
     s_lbl_map = s_lbl_tps = s_lbl_ect = s_lbl_batt = NULL;
     s_bar_tps = NULL;
     s_lbl_status = NULL;
+    s_btn_demo = s_btn_can = NULL;
     s_lbl_gmeter = s_bar_gmeter = NULL;
     s_redline_active = false;
     s_shift_last_value = -1;
+    // Os widgets sao outros a partir daqui: o "---" ja desenhado nao vale
+    // mais como estado, senao o blank nunca chegaria na tela nova.
+    s_blanked = false;
     for (int i = 0; i < SHIFT_SEGMENTS; i++) s_shift_seg[i] = NULL;
     for (int i = 0; i < 4; i++) s_shift_ring[i] = NULL;
     for (int i = 0; i < GRID_CH_COUNT; i++) { s_grid_val[i] = NULL; s_grid_mm[i] = NULL; }
@@ -1033,6 +1140,19 @@ void ui_screen_dashboard_show(void)
     }
     app_sim_set_redline(s_active_profile.redline_rpm);
 
+    // Reconcilia a fonte com o estado real dos componentes — s_source e uma
+    // preferencia desta tela, mas quem manda de verdade sao app_can/app_sim,
+    // que OUTRAS telas tambem ligam e desligam (o botao OBD2 da tela do CAN,
+    // o botao Demo da tela da ECU). Sem isso, um botao daqui podia ficar
+    // aceso apontando pra uma fonte que ja nao existe mais.
+    if (app_can_obd2_is_active()) {
+        s_source = DASH_SRC_CAN;          // OBD2 no ar: e a fonte mais "cara", ganha
+    } else if (s_source == DASH_SRC_CAN) {
+        s_source = DASH_SRC_ECU;          // desligado por fora enquanto estavamos fechados
+    } else {
+        s_source = app_sim_is_enabled() ? DASH_SRC_DEMO : DASH_SRC_ECU;
+    }
+
     // Essencial ANTES de criar a tela nova — ver o comentario grande em
     // reset_optional_widget_refs() sobre por que nao da pra confiar so no
     // DELETE (atrasado ~200ms) da tela antiga pra isso.
@@ -1077,17 +1197,30 @@ void ui_screen_dashboard_show(void)
 
 
     // Estilo/Modelo/Corte do dashboard agora se ajustam na tela de Config
-    // (junto do Tema) — sem botao "Perfis" nem modal aqui.
-    lv_obj_t *btn_demo = lv_btn_create(header);
-    lv_obj_set_size(btn_demo, 90, 28);
-    lv_obj_align(btn_demo, LV_ALIGN_RIGHT_MID, -5, 0);
-    lv_obj_set_style_bg_color(btn_demo, app_sim_is_enabled() ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
-    lv_obj_set_style_radius(btn_demo, 4, 0);
-    lv_obj_add_event_cb(btn_demo, demo_toggle_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *lbl_demo_btn = lv_label_create(btn_demo);
+    // (junto do Tema) — sem botao "Perfis" nem modal aqui. Os dois botoes
+    // da direita escolhem a FONTE dos dados (ver dash_src_t): nenhum aceso
+    // = ECU por BLE, que e o padrao.
+    s_btn_demo = lv_btn_create(header);
+    lv_obj_set_size(s_btn_demo, 90, 28);
+    lv_obj_align(s_btn_demo, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_radius(s_btn_demo, 4, 0);
+    lv_obj_add_event_cb(s_btn_demo, demo_toggle_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_demo_btn = lv_label_create(s_btn_demo);
     lv_label_set_text(lbl_demo_btn, LV_SYMBOL_PLAY " Demo");
     lv_obj_set_style_text_font(lbl_demo_btn, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_demo_btn);
+
+    s_btn_can = lv_btn_create(header);
+    lv_obj_set_size(s_btn_can, 90, 28);
+    lv_obj_align(s_btn_can, LV_ALIGN_RIGHT_MID, -100, 0);
+    lv_obj_set_style_radius(s_btn_can, 4, 0);
+    lv_obj_add_event_cb(s_btn_can, can_toggle_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_can_btn = lv_label_create(s_btn_can);
+    lv_label_set_text(lbl_can_btn, LV_SYMBOL_CHARGE " CAN");
+    lv_obj_set_style_text_font(lbl_can_btn, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_can_btn);
+
+    refresh_source_buttons();
 
     // Corpo da tela — arranjo inteiro depende do "modelo" (layout) do
     // perfil ativo. Cada builder cria seu próprio conjunto de widgets.
@@ -1108,7 +1241,9 @@ void ui_screen_dashboard_show(void)
     }
     apply_theme_color();
 
-    // Timer de atualizacao — 200ms, mesma cadencia das outras telas com dado ao vivo.
+    // Timer de atualizacao — 33ms (~30Hz, a cadencia alvo do LVGL neste
+    // projeto). Mais rapido que as outras telas de propósito: aqui tem
+    // ponteiro/arco em movimento, e a 200ms o movimento fica escalonado.
     s_timer = lv_timer_create(update_timer_cb, 33, NULL);
     update_timer_cb(NULL);
 

@@ -56,7 +56,30 @@ static volatile uint32_t s_filter_min = 0;
 static volatile uint32_t s_filter_max = 0x1FFFFFFF;
 
 // --- OBD2 ativo (ver app_can_obd2_set_active no header) ---
+// O round robin de PIDs e a decodificação das respostas moraram na tela do
+// CAN até agora; passaram pra cá pra que o dado sirva a QUALQUER consumidor
+// (o dashboard lê a mesma fonte) e continue vivo com a tela fechada.
+#define APP_CAN_OBD2_REQ_ID       0x7DFu   // broadcast Mode 01 (SAE J1979)
+#define APP_CAN_OBD2_RESP_ID      0x7E8u   // primeira ECU a responder
+#define APP_CAN_OBD2_REQ_PERIOD_MS 150     // um PID por vez, pra não inundar o barramento
+
+static const uint8_t k_obd2_pids[] = {
+    0x0C,  // RPM
+    0x0D,  // Velocidade
+    0x05,  // Temp. arrefecimento
+    0x0F,  // Temp. ar admissão
+    0x0B,  // MAP
+    0x11,  // TPS
+    0x42,  // Tensão da bateria
+};
+#define APP_CAN_OBD2_PID_COUNT  (int)(sizeof(k_obd2_pids) / sizeof(k_obd2_pids[0]))
+
 static volatile bool s_obd2_active = false;
+// Pausa explícita da task de captura. Não dá pra reaproveitar s_running pra
+// isso: com o OBD2 ativo a task roda mesmo com o sniffer parado, então
+// zerar s_running não a pararia mais (ver o gate em can_sniffer_task).
+static volatile bool s_rx_paused   = false;
+static app_can_obd2_data_t s_obd2_data = {0};   // protegido por s_lock
 
 // --- SD assíncrono (task dedicada — ver app_can_sd_async_* no header) ---
 typedef enum {
@@ -256,6 +279,59 @@ static esp_err_t ensure_twai_driver(void)
 }
 
 // ─────────────────────────────────────────────────────
+// OBD2: decodificação das respostas Mode 01 (ROADMAP.md §6). O frame vem
+// como [len][0x41][pid][A][B]... — as fórmulas por PID são as da tabela do
+// roadmap. Chamada de dentro da task de captura, com s_lock tomado.
+// ─────────────────────────────────────────────────────
+
+static void obd2_decode_frame_locked(const twai_message_t *msg, uint32_t now_ms)
+{
+    if (msg->identifier != APP_CAN_OBD2_RESP_ID) return;
+    if (msg->data_length_code < 5 || msg->data[1] != 0x41) return;
+
+    float A = (float)msg->data[3];
+    float B = (float)msg->data[4];
+
+    switch (msg->data[2]) {
+    case 0x0C: s_obd2_data.rpm       = (int32_t)((A * 256.0f + B) / 4.0f);   break;
+    case 0x0D: s_obd2_data.speed_kph = (int32_t)A;                            break;
+    case 0x05: s_obd2_data.ect_c     = (int32_t)(A - 40.0f);                  break;
+    case 0x0F: s_obd2_data.iat_c     = (int32_t)(A - 40.0f);                  break;
+    case 0x0B: s_obd2_data.map_kpa   = (int32_t)A;                            break;
+    case 0x11: s_obd2_data.tps_pct   = (int32_t)(A * 100.0f / 255.0f);        break;
+    case 0x42: s_obd2_data.batt_v    = (A * 256.0f + B) / 1000.0f;            break;
+    default:   return;   // PID que não pedimos — não conta como "vivo"
+    }
+
+    s_obd2_data.last_rx_ms = now_ms;
+    s_obd2_data.valid      = true;
+}
+
+// Um pedido por período, em round robin, e invalidação do snapshot quando o
+// carro para de responder. Chamada a cada volta do laço da task — inclusive
+// nas voltas em que o twai_receive só deu timeout, senão o round robin
+// pararia num barramento silencioso.
+static void obd2_poll_step(uint32_t now_ms)
+{
+    static uint32_t last_req_ms = 0;
+    static int      req_idx     = 0;
+
+    if (!s_obd2_active) return;
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_obd2_data.valid && (now_ms - s_obd2_data.last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+        s_obd2_data.valid = false;
+    }
+    xSemaphoreGive(s_lock);
+
+    if ((now_ms - last_req_ms) < APP_CAN_OBD2_REQ_PERIOD_MS) return;
+    last_req_ms = now_ms;
+
+    app_can_obd2_request_pid(k_obd2_pids[req_idx]);
+    req_idx = (req_idx + 1) % APP_CAN_OBD2_PID_COUNT;
+}
+
+// ─────────────────────────────────────────────────────
 // CAN capture task — core 0, priority 6
 // ─────────────────────────────────────────────────────
 
@@ -265,10 +341,16 @@ static void can_sniffer_task(void *arg)
     char csv[APP_CAN_CSV_LINE_MAX];
 
     for (;;) {
-        if (!s_running) {
+        // Recebe enquanto o sniffer estiver rodando OU o OBD2 ativo — o
+        // dashboard pode consumir OBD2 sem ninguém ter aberto a tela do
+        // sniffer. s_rx_paused tem prioridade: é o que segura a task
+        // enquanto o driver TWAI está sendo reinstalado.
+        if (s_rx_paused || (!s_running && !s_obd2_active)) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
+
+        obd2_poll_step((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
 
         twai_message_t msg = {0};
         esp_err_t err = twai_receive(&msg, pdMS_TO_TICKS(50));
@@ -280,12 +362,25 @@ static void can_sniffer_task(void *arg)
             continue;
         }
 
+        uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+
+        // OBD2 antes do filtro de software: o filtro é do sniffer (quais IDs
+        // o usuário quer LOGAR) e não pode calar a resposta do 0x7E8, que é
+        // o que alimenta o dashboard no modo CAN.
+        if (s_obd2_active) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            obd2_decode_frame_locked(&msg, now_ms);
+            xSemaphoreGive(s_lock);
+        }
+
         // Software filter
         if (msg.identifier < s_filter_min || msg.identifier > s_filter_max) {
             continue;
         }
 
-        uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        // Tabela por ID e estatísticas são do sniffer — com só o OBD2 ligado
+        // (tela do sniffer fechada) não faz sentido inflar os contadores.
+        if (!s_running) continue;
 
         // Update per-ID table and frame counter
         xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -719,11 +814,13 @@ esp_err_t app_can_obd2_set_active(bool enable)
 
     // Pausa a task de captura antes de mexer no driver — twai_receive() não
     // pode estar em andamento durante um uninstall/install. O timeout do
-    // twai_receive é 50ms; 100ms garante que a task já voltou pro laço
-    // "if (!s_running)" antes de seguirmos.
-    bool was_running = s_running;
-    s_running = false;
-    if (was_running) vTaskDelay(pdMS_TO_TICKS(100));
+    // twai_receive é 50ms; 100ms garante que a task já voltou pro gate no
+    // topo do laço antes de seguirmos. Usa s_rx_paused em vez de zerar
+    // s_running: com o OBD2 ativo a task roda mesmo com o sniffer parado,
+    // então mexer em s_running não a pararia (e ainda apagaria o estado do
+    // sniffer por baixo de quem estivesse logando).
+    s_rx_paused = true;
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_RETURN_ON_ERROR(bsp_can_set_selected(true), TAG, "CAN select failed");
 
@@ -741,19 +838,23 @@ esp_err_t app_can_obd2_set_active(bool enable)
     twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     esp_err_t e = twai_driver_install(&g, &t, &f);
-    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_running = was_running; return e; }
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_rx_paused = false; return e; }
     s_driver_ready = true;
 
     e = twai_start();
-    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_running = was_running; return e; }
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_rx_paused = false; return e; }
     s_driver_started = true;
     s_obd2_active     = enable;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_status.driver_ready = true;
+    // Zera o snapshot nas duas direções: ao ligar pra não mostrar valor de
+    // uma sessão antiga antes da primeira resposta chegar; ao desligar
+    // porque a fonte deixou de existir.
+    memset(&s_obd2_data, 0, sizeof(s_obd2_data));
     xSemaphoreGive(s_lock);
 
-    s_running = was_running;
+    s_rx_paused = false;
     ESP_LOGW(TAG, "OBD2 ativo=%d — TWAI agora em modo %s",
              enable, enable ? "NORMAL (transmite)" : "LISTEN_ONLY (so escuta)");
     return ESP_OK;
@@ -762,6 +863,23 @@ esp_err_t app_can_obd2_set_active(bool enable)
 bool app_can_obd2_is_active(void)
 {
     return s_obd2_active;
+}
+
+void app_can_obd2_get_data(app_can_obd2_data_t *out)
+{
+    if (!out) return;
+    if (!s_lock) { memset(out, 0, sizeof(*out)); return; }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    *out = s_obd2_data;
+    xSemaphoreGive(s_lock);
+
+    // A invalidação por silêncio também precisa valer pra quem lê com o
+    // OBD2 desligado ou a task parada (aí obd2_poll_step não roda).
+    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    if (out->valid && (now_ms - out->last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+        out->valid = false;
+    }
 }
 
 esp_err_t app_can_obd2_request_pid(uint8_t pid)

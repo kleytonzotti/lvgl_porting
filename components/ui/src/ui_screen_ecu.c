@@ -2,6 +2,7 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
+#include "app_can.h"
 #include "app_ecu.h"
 #include "app_sim.h"
 
@@ -14,13 +15,71 @@ static void update_values(lv_timer_t *timer);
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
+// ─────────────────────────────────────────────────────
+// Fonte de dados desta tela — mesmo padrao de tres fontes mutuamente
+// exclusivas do dashboard (ui_screen_dashboard.c, ROADMAP.md §10):
+//   ECU  — padrao. Telemetria BLE da ECU programavel (app_ecu).
+//   DEMO — simulador local (app_sim), sem hardware nenhum ligado.
+//   CAN  — OBD2 Mode 01 sobre o CAN do carro de fabrica (app_can,
+//          ROADMAP.md §6). ATENCAO: nesse modo o painel TRANSMITE
+//          requisicoes no barramento (driver TWAI em NORMAL).
+// ─────────────────────────────────────────────────────
+typedef enum { ECU_SRC_ECU = 0, ECU_SRC_DEMO, ECU_SRC_CAN } ecu_src_t;
+
+static ecu_src_t s_source   = ECU_SRC_ECU;
+static lv_obj_t *s_btn_demo = NULL;
+static lv_obj_t *s_btn_can  = NULL;
+
+static void refresh_source_buttons(void)
+{
+    if (s_btn_demo) {
+        lv_obj_set_style_bg_color(s_btn_demo,
+            (s_source == ECU_SRC_DEMO) ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
+    }
+    if (s_btn_can) {
+        // Vermelho, nao verde: o modo CAN transmite no barramento do carro.
+        lv_obj_set_style_bg_color(s_btn_can,
+            (s_source == ECU_SRC_CAN) ? ZOTTI_RED : ZOTTI_BG_CARD, 0);
+    }
+}
+
+static void set_source(ecu_src_t src)
+{
+    if (src == s_source) return;
+
+    // Sair do modo CAN devolve o TWAI pro LISTEN_ONLY — o painel volta a so
+    // escutar assim que a fonte deixa de ser o OBD2. Aviso: reinstala o
+    // driver e espera 100ms com a task do LVGL parada, mesmo custo que o
+    // botao da tela do CAN/dashboard ja paga; aceitavel num toque deliberado.
+    if (s_source == ECU_SRC_CAN && app_can_obd2_is_active()) {
+        app_can_obd2_set_active(false);
+    }
+
+    if (src == ECU_SRC_CAN && !app_can_obd2_is_active()) {
+        esp_err_t err = app_can_obd2_set_active(true);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Nao foi possivel ativar o OBD2 (err=%d) — voltando pra ECU", (int)err);
+            src = ECU_SRC_ECU;
+        }
+    }
+
+    app_sim_set_enabled(src == ECU_SRC_DEMO);
+
+    s_source = src;
+    refresh_source_buttons();
+    update_values(NULL);
+}
+
 static void demo_toggle_cb(lv_event_t *e)
 {
-    bool enable = !app_sim_is_enabled();
-    app_sim_set_enabled(enable);
-    lv_obj_set_style_bg_color(lv_event_get_target(e),
-                              enable ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
-    update_values(NULL);
+    LV_UNUSED(e);
+    set_source(s_source == ECU_SRC_DEMO ? ECU_SRC_ECU : ECU_SRC_DEMO);
+}
+
+static void can_toggle_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    set_source(s_source == ECU_SRC_CAN ? ECU_SRC_ECU : ECU_SRC_CAN);
 }
 
 // Sensores recebidos via BLE da ECU externa.
@@ -83,7 +142,7 @@ static void update_values(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
 
-    if (app_sim_is_enabled()) {
+    if (s_source == ECU_SRC_DEMO) {
         app_sim_data_t d;
         app_sim_get_data(&d);
         if (s_lbl_ble) {
@@ -96,6 +155,37 @@ static void update_values(lv_timer_t *timer)
         set_val_text(SENS_TPS,     "%u %%", (unsigned)d.tps_pct);
         set_val_text(SENS_LAMBDA,  "%.3f", (double)d.lambda);
         set_val_text(SENS_AFR,     "%.1f", (double)(d.lambda * 14.7f));
+        set_val_text(SENS_ECT,     "%d °C", (int)d.ect_c);
+        set_val_text(SENS_IAT,     "%d °C", (int)d.iat_c);
+        set_val_text(SENS_PRESSAO, "---");
+        set_val_text(SENS_BATERIA, "%.1f V", (double)d.batt_v);
+        return;
+    }
+
+    if (s_source == ECU_SRC_CAN) {
+        app_can_obd2_data_t d;
+        app_can_obd2_get_data(&d);
+        if (s_lbl_ble) {
+            lv_label_set_text(s_lbl_ble, d.valid
+                ? LV_SYMBOL_WARNING "  CAN/OBD2 lendo (transmitindo)"
+                : LV_SYMBOL_WARNING "  CAN/OBD2 sem resposta");
+            lv_obj_set_style_text_color(s_lbl_ble, d.valid ? ZOTTI_GREEN : ZOTTI_RED, 0);
+        }
+        if (!d.valid) {
+            set_val_text(SENS_ESTADO, "---");
+            for (int i = 0; i < SENS_COUNT; i++) {
+                if (i != SENS_ESTADO) set_val_text(i, "---");
+            }
+            return;
+        }
+        // Mode 01 padrao (ROADMAP.md §6) nao traz lambda/AFR nem pressao —
+        // ficam "---" de proposito, igual ao dashboard no modo CAN.
+        set_val_text(SENS_ESTADO,  "CAN");
+        set_val_text(SENS_RPM,     "%u rpm", (unsigned)d.rpm);
+        set_val_text(SENS_MAP,     "%u kPa", (unsigned)d.map_kpa);
+        set_val_text(SENS_TPS,     "%u %%", (unsigned)d.tps_pct);
+        set_val_text(SENS_LAMBDA,  "---");
+        set_val_text(SENS_AFR,     "---");
         set_val_text(SENS_ECT,     "%d °C", (int)d.ect_c);
         set_val_text(SENS_IAT,     "%d °C", (int)d.iat_c);
         set_val_text(SENS_PRESSAO, "---");
@@ -142,10 +232,23 @@ static void screen_delete_cb(lv_event_t *e)
     if (s_timer) { lv_timer_delete(s_timer); s_timer = NULL; }
     for (int i = 0; i < SENS_COUNT; i++) s_lbl_val[i] = NULL;
     s_lbl_ble = NULL;
+    s_btn_demo = s_btn_can = NULL;
 }
 
 void ui_screen_ecu_show(void)
 {
+    // Reconcilia a fonte com o estado real dos componentes — s_source e uma
+    // preferencia desta tela, mas app_can/app_sim tambem sao ligados por
+    // OUTRAS telas (botao OBD2 da tela CAN, botao CAN/Demo do dashboard).
+    // Mesmo criterio do dashboard: OBD2 no ar e a fonte mais "cara", ganha.
+    if (app_can_obd2_is_active()) {
+        s_source = ECU_SRC_CAN;
+    } else if (s_source == ECU_SRC_CAN) {
+        s_source = ECU_SRC_ECU;
+    } else {
+        s_source = app_sim_is_enabled() ? ECU_SRC_DEMO : ECU_SRC_ECU;
+    }
+
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, ZOTTI_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -177,16 +280,27 @@ void ui_screen_ecu_show(void)
     lv_obj_set_style_text_color(lbl_title, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    lv_obj_t *btn_demo = lv_btn_create(header);
-    lv_obj_set_size(btn_demo, 110, 28);
-    lv_obj_align(btn_demo, LV_ALIGN_RIGHT_MID, -5, 0);
-    lv_obj_set_style_bg_color(btn_demo, app_sim_is_enabled() ? ZOTTI_YELLOW : ZOTTI_BG_CARD, 0);
-    lv_obj_set_style_radius(btn_demo, 4, 0);
-    lv_obj_add_event_cb(btn_demo, demo_toggle_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *lbl_demo = lv_label_create(btn_demo);
+    s_btn_demo = lv_btn_create(header);
+    lv_obj_set_size(s_btn_demo, 110, 28);
+    lv_obj_align(s_btn_demo, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_radius(s_btn_demo, 4, 0);
+    lv_obj_add_event_cb(s_btn_demo, demo_toggle_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_demo = lv_label_create(s_btn_demo);
     lv_label_set_text(lbl_demo, LV_SYMBOL_PLAY " Demo");
     lv_obj_set_style_text_font(lbl_demo, ZOTTI_FONT_TINY, 0);
     lv_obj_center(lbl_demo);
+
+    s_btn_can = lv_btn_create(header);
+    lv_obj_set_size(s_btn_can, 110, 28);
+    lv_obj_align(s_btn_can, LV_ALIGN_RIGHT_MID, -120, 0);
+    lv_obj_set_style_radius(s_btn_can, 4, 0);
+    lv_obj_add_event_cb(s_btn_can, can_toggle_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_can = lv_label_create(s_btn_can);
+    lv_label_set_text(lbl_can, LV_SYMBOL_CHARGE " CAN");
+    lv_obj_set_style_text_font(lbl_can, ZOTTI_FONT_TINY, 0);
+    lv_obj_center(lbl_can);
+
+    refresh_source_buttons();
 
     // Status conexao BLE.
     lv_obj_t *status_bar = lv_obj_create(scr);

@@ -8,51 +8,46 @@ static const char *TAG = "UI_CAN";
 
 // ─────────────────────────────────────────────────────
 // OBD2 ativo sobre o CAN (ROADMAP.md §6) — PIDs Mode 01 padrao (SAE
-// J1979) pedidos em round robin na aba Decoder. So funciona com o modo
-// OBD2 ligado (app_can_obd2_set_active), que reinstala o driver TWAI em
-// NORMAL — o painel passa a TRANSMITIR requisicoes no barramento, nao so
-// escutar. Ver aviso na propria aba.
+// J1979). So funciona com o modo OBD2 ligado (app_can_obd2_set_active),
+// que reinstala o driver TWAI em NORMAL — o painel passa a TRANSMITIR
+// requisicoes no barramento, nao so escutar. Ver aviso na propria aba.
+//
+// O round robin dos PIDs e a decodificacao das respostas moram no
+// app_can (task de captura), nao aqui: assim o dado continua vivo com esta
+// tela fechada e o dashboard (botao "CAN") consome exatamente a mesma
+// fonte. Esta tela so LE o snapshot e desenha.
 // ─────────────────────────────────────────────────────
-typedef struct { uint8_t pid; const char *label; const char *unit; } obd2_pid_def_t;
+typedef enum {
+    OBD2_ROW_RPM = 0, OBD2_ROW_SPEED, OBD2_ROW_ECT,
+    OBD2_ROW_IAT, OBD2_ROW_MAP, OBD2_ROW_TPS, OBD2_ROW_BATT,
+    OBD2_ROW_COUNT,
+} obd2_row_t;
 
-static const obd2_pid_def_t k_obd2_pids[] = {
-    { 0x0C, "RPM",           ""     },
-    { 0x0D, "Velocidade",    "km/h" },
-    { 0x05, "Arrefecimento", "C"    },
-    { 0x0F, "Ar admissao",   "C"    },
-    { 0x0B, "MAP",           "kPa"  },
-    { 0x11, "TPS",           "%"    },
-    { 0x42, "Bateria",       "V"    },
+typedef struct { const char *label; const char *unit; } obd2_row_def_t;
+
+static const obd2_row_def_t k_obd2_rows[OBD2_ROW_COUNT] = {
+    [OBD2_ROW_RPM]   = { "RPM",           ""     },
+    [OBD2_ROW_SPEED] = { "Velocidade",    "km/h" },
+    [OBD2_ROW_ECT]   = { "Arrefecimento", "C"    },
+    [OBD2_ROW_IAT]   = { "Ar admissao",   "C"    },
+    [OBD2_ROW_MAP]   = { "MAP",           "kPa"  },
+    [OBD2_ROW_TPS]   = { "TPS",           "%"    },
+    [OBD2_ROW_BATT]  = { "Bateria",       "V"    },
 };
-#define OBD2_PID_COUNT  (int)(sizeof(k_obd2_pids) / sizeof(k_obd2_pids[0]))
-#define OBD2_RESP_ID    0x7E8u   // primeira ECU a responder (ver ROADMAP.md §6)
 
 // ── Estado da tela ────────────────────────────────────
 static lv_obj_t   *s_lbl_can_status  = NULL;
 static lv_obj_t   *s_lbl_obd2_status = NULL;
 static lv_obj_t   *s_btn_obd2        = NULL;
-static lv_obj_t   *s_lbl_obd2_val[OBD2_PID_COUNT];
+static lv_obj_t   *s_lbl_obd2_val[OBD2_ROW_COUNT];
 static lv_timer_t *s_poll_timer      = NULL;
-static int         s_obd2_req_idx    = 0;
-static app_can_id_entry_t s_obd2_snap[APP_CAN_MAX_IDS];
 
 static void back_cb(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_menu_show); }
 
-// Decodifica a resposta Mode 01 (byte0=len, byte1=0x41, byte2=pid,
-// byte3=A, byte4=B) usando as formulas do ROADMAP.md §6.
-static float decode_obd2(uint8_t pid, const uint8_t *d)
+static void clear_obd2_values(void)
 {
-    float A = (float)d[3];
-    float B = (float)d[4];
-    switch (pid) {
-    case 0x0C: return (A * 256.0f + B) / 4.0f;      // RPM
-    case 0x0D: return A;                            // Velocidade
-    case 0x05: return A - 40.0f;                     // Arrefecimento
-    case 0x0F: return A - 40.0f;                     // Ar admissao
-    case 0x0B: return A;                             // MAP
-    case 0x11: return A * 100.0f / 255.0f;           // TPS
-    case 0x42: return (A * 256.0f + B) / 1000.0f;    // Bateria
-    default:   return 0.0f;
+    for (int i = 0; i < OBD2_ROW_COUNT; i++) {
+        if (s_lbl_obd2_val[i]) lv_label_set_text(s_lbl_obd2_val[i], "---");
     }
 }
 
@@ -77,11 +72,7 @@ static void obd2_toggle_cb(lv_event_t *e)
         return;
     }
     set_obd2_button_appearance(enable);
-    if (!enable) {
-        for (int i = 0; i < OBD2_PID_COUNT; i++) {
-            if (s_lbl_obd2_val[i]) lv_label_set_text(s_lbl_obd2_val[i], "---");
-        }
-    }
+    if (!enable) clear_obd2_values();
 }
 
 static void poll_timer_cb(lv_timer_t *timer)
@@ -104,26 +95,35 @@ static void poll_timer_cb(lv_timer_t *timer)
     }
     if (!active) return;
 
-    // Le a resposta do pedido anterior (ID 0x7E8) antes de mandar o proximo.
-    uint32_t count = app_can_get_id_table(s_obd2_snap, APP_CAN_MAX_IDS);
-    for (uint32_t i = 0; i < count; i++) {
-        if (s_obd2_snap[i].id != OBD2_RESP_ID || s_obd2_snap[i].dlc < 5) continue;
-        uint8_t pid = s_obd2_snap[i].data[2];
-        for (int p = 0; p < OBD2_PID_COUNT; p++) {
-            if (k_obd2_pids[p].pid != pid || !s_lbl_obd2_val[p]) continue;
-            float v = decode_obd2(pid, s_obd2_snap[i].data);
-            if (k_obd2_pids[p].unit[0]) {
-                lv_label_set_text_fmt(s_lbl_obd2_val[p], "%.1f %s", (double)v, k_obd2_pids[p].unit);
-            } else {
-                lv_label_set_text_fmt(s_lbl_obd2_val[p], "%.0f", (double)v);
-            }
-        }
-        break;
+    // Snapshot decodificado pelo app_can (quem pede os PIDs e decodifica as
+    // respostas e a task de captura — ver ROADMAP.md §6).
+    app_can_obd2_data_t d;
+    app_can_obd2_get_data(&d);
+    if (!d.valid) {
+        // Sem resposta ha mais de APP_CAN_OBD2_STALE_MS: melhor mostrar "---"
+        // do que congelar o ultimo valor lido como se ainda fosse atual.
+        clear_obd2_values();
+        return;
     }
 
-    // Proxima requisicao (round robin) — uma por tick, pra nao inundar o barramento.
-    app_can_obd2_request_pid(k_obd2_pids[s_obd2_req_idx].pid);
-    s_obd2_req_idx = (s_obd2_req_idx + 1) % OBD2_PID_COUNT;
+    const float vals[OBD2_ROW_COUNT] = {
+        [OBD2_ROW_RPM]   = (float)d.rpm,
+        [OBD2_ROW_SPEED] = (float)d.speed_kph,
+        [OBD2_ROW_ECT]   = (float)d.ect_c,
+        [OBD2_ROW_IAT]   = (float)d.iat_c,
+        [OBD2_ROW_MAP]   = (float)d.map_kpa,
+        [OBD2_ROW_TPS]   = (float)d.tps_pct,
+        [OBD2_ROW_BATT]  = d.batt_v,
+    };
+
+    for (int i = 0; i < OBD2_ROW_COUNT; i++) {
+        if (!s_lbl_obd2_val[i]) continue;
+        if (k_obd2_rows[i].unit[0]) {
+            lv_label_set_text_fmt(s_lbl_obd2_val[i], "%.1f %s", (double)vals[i], k_obd2_rows[i].unit);
+        } else {
+            lv_label_set_text_fmt(s_lbl_obd2_val[i], "%.0f", (double)vals[i]);
+        }
+    }
 }
 
 static void screen_delete_cb(lv_event_t *e)
@@ -131,7 +131,7 @@ static void screen_delete_cb(lv_event_t *e)
     LV_UNUSED(e);
     if (s_poll_timer) { lv_timer_delete(s_poll_timer); s_poll_timer = NULL; }
     s_lbl_can_status = s_lbl_obd2_status = s_btn_obd2 = NULL;
-    for (int i = 0; i < OBD2_PID_COUNT; i++) s_lbl_obd2_val[i] = NULL;
+    for (int i = 0; i < OBD2_ROW_COUNT; i++) s_lbl_obd2_val[i] = NULL;
 }
 
 // ─────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ static void build_decoder_tab(lv_obj_t *parent)
     lv_obj_set_style_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP, 0);
     lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
-    for (int i = 0; i < OBD2_PID_COUNT; i++) {
+    for (int i = 0; i < OBD2_ROW_COUNT; i++) {
         lv_obj_t *card = lv_obj_create(grid);
         lv_obj_set_size(card, 178, 80);
         lv_obj_set_style_bg_color(card, ZOTTI_BG_CARD, 0);
@@ -207,7 +207,7 @@ static void build_decoder_tab(lv_obj_t *parent)
         lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t *lbl_name = lv_label_create(card);
-        lv_label_set_text(lbl_name, k_obd2_pids[i].label);
+        lv_label_set_text(lbl_name, k_obd2_rows[i].label);
         lv_obj_set_style_text_font(lbl_name, ZOTTI_FONT_TINY, 0);
         lv_obj_set_style_text_color(lbl_name, ZOTTI_GRAY, 0);
         lv_obj_align(lbl_name, LV_ALIGN_TOP_LEFT, 10, 8);
@@ -313,7 +313,6 @@ void ui_screen_can_show(void)
     build_decoder_tab(tab_decode);
     build_gateway_tab(tab_gateway);
 
-    s_obd2_req_idx = 0;
     s_poll_timer = lv_timer_create(poll_timer_cb, 300, NULL);
     poll_timer_cb(NULL);
 
