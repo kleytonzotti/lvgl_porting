@@ -309,10 +309,16 @@ void ui_screen_dashboard_update(int32_t rpm, int32_t speed_kph,
     update_dial_needle(s_dial_rpm, s_needle_rpm, rpm);            // Classico/Duplo, Estilo Classico
     update_dial_needle(s_dial_speed, s_needle_speed, speed_kph);  // Duplo, Estilo Classico
 
-    // RPM: so atualiza se mudou mais de 5 rpm (rejeita noise de 1-2 rpm)
+    // RPM: so atualiza se mudou significativamente (mais sensível perto do máximo)
     if (s_lbl_rpm) {
         static int32_t s_last_rpm = -9999;
-        if (rpm != s_last_rpm && (rpm - s_last_rpm > 5 || s_last_rpm - rpm > 5)) {
+        int32_t rpm_delta = rpm - s_last_rpm;
+
+        // Threshold adaptativo: maior perto do redline para evitar tremor
+        // Redline é ~78% da taxa máxima, então considerar perto do máximo = RPM > 75% redline
+        int32_t threshold = (rpm > (int32_t)(s_active_profile.redline_rpm * 0.75f)) ? 10 : 5;
+
+        if (rpm_delta > threshold || rpm_delta < -threshold) {
             s_last_rpm = rpm;
             lv_label_set_text_fmt(s_lbl_rpm, "%ld", (long)rpm);
         } else {
