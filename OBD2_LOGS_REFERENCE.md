@@ -66,7 +66,7 @@ Para reativar um log específico, descomente a linha correspondente em [componen
 
 ### 4. `[OBD2-GET]` — Dashboard/Decoder lendo snapshot
 
-**Localização:** `app_can_obd2_get_data()`, line ~890 e ~898
+**Localização:** `app_bcu_obd2_get_data()`, line ~890 e ~898
 
 **Tem dois sub-tipos:**
 
@@ -91,7 +91,7 @@ Para reativar um log específico, descomente a linha correspondente em [componen
 
 ### 5. `[OBD2]` — Ativação/Desativação da fonte OBD2
 
-**Localização:** `app_can_obd2_set_active()`, line ~867
+**Localização:** `app_bcu_obd2_set_active()`, line ~867
 
 **O que faz:**
 ```
@@ -110,7 +110,7 @@ Para reativar um log específico, descomente a linha correspondente em [componen
 
 ### 6. `[OBD2-TX] Ignorado/Falha` — Erros de transmissão
 
-**Localização:** `app_can_obd2_request_pid()`, line ~906 e ~920
+**Localização:** `app_bcu_obd2_request_pid()`, line ~906 e ~920
 
 #### 6a. Transmissão ignorada (estado inválido)
 ```
@@ -164,10 +164,10 @@ Fluxo esperado (com todos ativados):
 | `[OBD2-TX]` | app_can.c | `obd2_poll_step()` | ~338 | Quiser ver todas as requisições |
 | `[OBD2-RX]` | app_can.c | `obd2_decode_frame_locked()` | ~310 | Quiser validar decodificação |
 | `[OBD2-STALE]` | app_can.c | `obd2_poll_step()` | ~328 | Quiser ver timeouts |
-| `[OBD2-GET]` (stale) | app_can.c | `app_can_obd2_get_data()` | ~890 | Diagnosticar invalidação |
-| `[OBD2-GET]` (values) | app_can.c | `app_can_obd2_get_data()` | ~898 | Ver dados lidos a cada 1s |
-| `[OBD2]` | app_can.c | `app_can_obd2_set_active()` | ~867 | Confirmar ativação/desativação |
-| `[OBD2-TX] erros` | app_can.c | `app_can_obd2_request_pid()` | ~906, ~920 | Debugar falhas de TX |
+| `[OBD2-GET]` (stale) | app_can.c | `app_bcu_obd2_get_data()` | ~890 | Diagnosticar invalidação |
+| `[OBD2-GET]` (values) | app_can.c | `app_bcu_obd2_get_data()` | ~898 | Ver dados lidos a cada 1s |
+| `[OBD2]` | app_can.c | `app_bcu_obd2_set_active()` | ~867 | Confirmar ativação/desativação |
+| `[OBD2-TX] erros` | app_can.c | `app_bcu_obd2_request_pid()` | ~906, ~920 | Debugar falhas de TX |
 
 ---
 

@@ -1,5 +1,5 @@
 #include "ui.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
@@ -8,7 +8,7 @@ static const char *TAG = "UI_CAN";
 
 // ─────────────────────────────────────────────────────
 // OBD2 ativo sobre o CAN (ROADMAP.md §6) — PIDs Mode 01 padrao (SAE
-// J1979). So funciona com o modo OBD2 ligado (app_can_obd2_set_active),
+// J1979). So funciona com o modo OBD2 ligado (app_bcu_obd2_set_active),
 // que reinstala o driver TWAI em NORMAL — o painel passa a TRANSMITIR
 // requisicoes no barramento, nao so escutar. Ver aviso na propria aba.
 //
@@ -65,8 +65,8 @@ static void set_obd2_button_appearance(bool active)
 static void obd2_toggle_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    bool enable = !app_can_obd2_is_active();
-    esp_err_t err = app_can_obd2_set_active(enable);
+    bool enable = !app_bcu_obd2_is_active();
+    esp_err_t err = app_bcu_obd2_set_active(enable);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Falha ao %s OBD2 (err=%d)", enable ? "ativar" : "desativar", (int)err);
         return;
@@ -79,14 +79,14 @@ static void poll_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
 
-    app_can_status_t st;
-    app_can_sniffer_get_status(&st);
+    app_bcu_status_t st;
+    app_bcu_sniffer_get_status(&st);
     if (s_lbl_can_status) {
         lv_label_set_text(s_lbl_can_status, st.driver_ready ? "CAN: OK" : "CAN: OFF");
         lv_obj_set_style_text_color(s_lbl_can_status, st.driver_ready ? ZOTTI_GREEN : ZOTTI_RED, 0);
     }
 
-    bool active = app_can_obd2_is_active();
+    bool active = app_bcu_obd2_is_active();
     if (s_lbl_obd2_status) {
         lv_label_set_text(s_lbl_obd2_status, active
             ? LV_SYMBOL_WARNING "  OBD2 ATIVO — o painel esta TRANSMITINDO requisicoes no barramento"
@@ -97,10 +97,10 @@ static void poll_timer_cb(lv_timer_t *timer)
 
     // Snapshot decodificado pelo app_can (quem pede os PIDs e decodifica as
     // respostas e a task de captura — ver ROADMAP.md §6).
-    app_can_obd2_data_t d;
-    app_can_obd2_get_data(&d);
+    app_bcu_obd2_data_t d;
+    app_bcu_obd2_get_data(&d);
     if (!d.valid) {
-        // Sem resposta ha mais de APP_CAN_OBD2_STALE_MS: melhor mostrar "---"
+        // Sem resposta ha mais de APP_BCU_OBD2_STALE_MS: melhor mostrar "---"
         // do que congelar o ultimo valor lido como se ainda fosse atual.
         clear_obd2_values();
         return;
@@ -220,7 +220,7 @@ static void build_decoder_tab(lv_obj_t *parent)
         s_lbl_obd2_val[i] = lbl_val;
     }
 
-    set_obd2_button_appearance(app_can_obd2_is_active());
+    set_obd2_button_appearance(app_bcu_obd2_is_active());
 }
 
 static void build_gateway_tab(lv_obj_t *parent)
@@ -274,7 +274,7 @@ void ui_screen_can_show(void)
     lv_obj_set_style_text_color(s_lbl_can_status, ZOTTI_RED, 0);
     lv_obj_align(s_lbl_can_status, LV_ALIGN_RIGHT_MID, -10, 0);
 
-    // Filtros (usados pela aba Sniffer/tela CAN Sniffer — ver ui_screen_can_sniffer.c).
+    // Filtros (usados pela aba Sniffer/tela CAN Sniffer — ver ui_screen_bcu_monitor.c).
     lv_obj_t *filter_bar = lv_obj_create(scr);
     lv_obj_set_size(filter_bar, 800, 44);
     lv_obj_set_pos(filter_bar, 0, 40);

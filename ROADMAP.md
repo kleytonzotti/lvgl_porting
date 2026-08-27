@@ -45,7 +45,7 @@ não um acidente de arquitetura.
 | `ui_screen_ecu.c` | Tela "MONITOR ECU BLE" | Lê dados reais de `app_ecu` a cada 300ms (antes só mostrava "---") |
 | `ui_screen_dashboard.c` | Dashboard | 4 modelos de tela (Classic/Race/Grid/Duplo), config única persistida em NVS (editada em Configurações), efeito de "perto do corte", modo Demo, cor do acento do RPM (Grid) — ver §10 |
 | `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
-| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_can_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_can` (§6) |
+| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_bcu_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_can` (§6) |
 | `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
 
 ### Código morto removido
@@ -62,7 +62,7 @@ apagados. `ui_screen_touch_create()` foi mantida: é usada de verdade por
 `ui_screen_sd_browser_show()` fazia montagem+listagem do cartão **de forma
 síncrona dentro da task do LVGL** (via `lv_async_call`, que só adia — não
 tira do mesmo thread). Corrigido: `app_can.c` agora tem uma **task dedicada
-de SD** (`sd_worker_task`) + fila de pedidos (`app_can_sd_async_*` no
+de SD** (`sd_worker_task`) + fila de pedidos (`app_bcu_sd_async_*` no
 header). `ui_screen_sd_browser.c` foi reescrito pra só enfileirar pedidos
 (mount/list/delete/format) e aplicar o resultado na tela via `lv_async_call`
 quando o worker termina — nunca bloqueia a task do LVGL.
@@ -71,7 +71,7 @@ quando o worker termina — nunca bloqueia a task do LVGL.
 de verdade, `taskLVGL` travou dentro de `build_list()` criando os botões da
 lista (watchdog disparando, heap parado). Duas hipóteses investigadas:
 1. `s_entry_count` maior que o array `s_entries[48]` — corrigido
-   (`app_can_sd_async_get_dir_result` devolvia contagem não limitada; e
+   (`app_bcu_sd_async_get_dir_result` devolvia contagem não limitada; e
    `build_list()`/`apply_dir_result_async` agora trunca por segurança).
 2. Estouro de pilha na `sd_worker_task` corrompendo o heap (o array local
    `tmp[48]` de ~2.3KB somado à profundidade FATFS/VFS/SDSPI) — removido:
@@ -84,12 +84,12 @@ Ainda não confirmado em hardware se isso resolveu — próximo teste real vai
 dizer. Se persistir, o log `[DIAG-SD-TASK]` novo deve apontar o culpado.
 
 **Ponto residual conhecido, não corrigido (menor impacto):**
-`app_can_sniffer_start()` (chamado por `ui_screen_can_sniffer_show()` e pelo
-botão START/STOP) ainda chama `app_can_sd_mount()` de forma síncrona. Na
+`app_bcu_sniffer_start()` (chamado por `ui_screen_can_sniffer_show()` e pelo
+botão START/STOP) ainda chama `app_bcu_sd_mount()` de forma síncrona. Na
 prática só bloqueia de verdade se o cartão **não** tiver sido montado no
 boot (ex: cartão inserido depois) — o caso comum (já montado) retorna na
 hora. Se isso incomodar, dá pra trocar essas duas chamadas por
-`app_can_sd_async_mount()` seguindo o mesmo padrão.
+`app_bcu_sd_async_mount()` seguindo o mesmo padrão.
 
 ## 4. Protocolo ECU → Painel (BLE notify), v1
 
@@ -161,7 +161,7 @@ em `app_can.c`). Precisa trocar `TWAI_MODE_LISTEN_ONLY` → `TWAI_MODE_NORMAL`
 Isso é **independente** da ECU programável — é uma segunda fonte de dados (o
 carro de fábrica), não conflita com o app_ecu.
 
-**Implementado**: `app_can_obd2_set_active()`/`app_can_obd2_request_pid()`
+**Implementado**: `app_bcu_obd2_set_active()`/`app_bcu_obd2_request_pid()`
 em `components/app_can/` — reinstala o driver TWAI em `TWAI_MODE_NORMAL`
 (transmite) quando ligado, volta pro `TWAI_MODE_LISTEN_ONLY` padrão quando
 desligado. **Desligado por padrão** — precisa ser ligado explicitamente
@@ -173,12 +173,12 @@ respondendo Mode 01).
 **O round robin e a decodificação moram no `app_can`, não na UI** (mudou
 nesta rodada — antes era um `lv_timer` dentro do `ui_screen_can.c`). Com o
 modo ativo, a própria task de captura pede um PID a cada 150ms e decodifica
-as respostas de `0x7E8` num snapshot (`app_can_obd2_get_data()`, struct
-`app_can_obd2_data_t`). Três consequências que motivaram a mudança:
+as respostas de `0x7E8` num snapshot (`app_bcu_obd2_get_data()`, struct
+`app_bcu_obd2_data_t`). Três consequências que motivaram a mudança:
 1. O dado continua vivo com a tela do CAN **fechada** — é o que permite o
    dashboard consumir OBD2 (§10).
 2. Um único round robin no barramento, não um por tela aberta.
-3. `valid` cai sozinho depois de `APP_CAN_OBD2_STALE_MS` (2s) sem resposta,
+3. `valid` cai sozinho depois de `APP_BCU_OBD2_STALE_MS` (2s) sem resposta,
    em vez de congelar o último valor lido como se ainda fosse atual.
 
 A recepção agora roda com o sniffer parado, se o OBD2 estiver ativo — a
@@ -285,7 +285,7 @@ cada `ui_screen_dashboard_show()` ela é reconciliada com o estado real dos
 componentes (OBD2 ativo ganha; senão segue `app_sim_is_enabled()`). Sem
 isso, um botão daqui ficava aceso apontando pra uma fonte que já não existia.
 
-⚠️ `app_can_obd2_set_active()` reinstala o driver TWAI e espera 100ms —
+⚠️ `app_bcu_obd2_set_active()` reinstala o driver TWAI e espera 100ms —
 chamado da task do LVGL, trava a tela por esse tempo. Aceitável num toque
 deliberado de botão (é o mesmo custo que o botão da tela do CAN sempre
 pagou), mas **não** chame isso de dentro do timer de 33ms do dashboard.

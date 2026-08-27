@@ -114,7 +114,7 @@ static lv_obj_t *create_reading_card(lv_obj_t *parent, const char *label_text, i
 }
 
 // s_selected_mode persiste entre entradas na tela (mesma ideia do filtro em
-// ui_screen_can_sniffer.c) — reabrir a tela nao deve resetar o modo nem
+// ui_screen_bcu_monitor.c) — reabrir a tela nao deve resetar o modo nem
 // mandar um comando novo sem o usuario tocar em nada.
 void ui_screen_pedal_show(void)
 {

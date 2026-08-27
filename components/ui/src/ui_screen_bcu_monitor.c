@@ -1,5 +1,5 @@
 #include "ui.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
@@ -52,7 +52,7 @@ static lv_obj_t   *s_kbd_field_lbl[2]  = {NULL, NULL};
 static lv_obj_t   *s_kbd_field_cont[2] = {NULL, NULL};
 
 // Snapshot buffer (static — not on stack)
-static app_can_id_entry_t s_snapshot[APP_CAN_MAX_IDS];
+static app_bcu_id_entry_t s_snapshot[APP_BCU_MAX_IDS];
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -81,8 +81,8 @@ static void apply_filter(int idx)
         fmin = k_filters[idx].min;
         fmax = k_filters[idx].max;
     }
-    app_can_set_filter(fmin, fmax);
-    app_can_clear_id_table();
+    app_bcu_set_filter(fmin, fmax);
+    app_bcu_clear_id_table();
     s_prev_id_count = 0;
 
     for (int i = 0; i <= IDX_CUSTOM; i++) {
@@ -101,7 +101,7 @@ static void update_table(void)
 {
     if (!s_tbl) return;
 
-    uint32_t count = app_can_get_id_table(s_snapshot, APP_CAN_MAX_IDS);
+    uint32_t count = app_bcu_get_id_table(s_snapshot, APP_BCU_MAX_IDS);
     if (count == 0) return;
 
     // Grow row count only if needed (never shrink during a session)
@@ -112,7 +112,7 @@ static void update_table(void)
 
     char cell[48];
     for (uint32_t r = 0; r < count; r++) {
-        const app_can_id_entry_t *e = &s_snapshot[r];
+        const app_bcu_id_entry_t *e = &s_snapshot[r];
 
         // Col 0: ID
         if (e->extd) {
@@ -159,15 +159,15 @@ static void update_table(void)
 static void update_status(void)
 {
     if (!s_lbl_status || !s_lbl_info) return;
-    app_can_status_t st;
-    app_can_sniffer_get_status(&st);
+    app_bcu_status_t st;
+    app_bcu_sniffer_get_status(&st);
 
     lv_obj_set_style_text_color(s_lbl_status,
-        st.state == APP_CAN_STATE_RUNNING ? ZOTTI_GREEN :
-        st.state == APP_CAN_STATE_ERROR   ? ZOTTI_RED   : ZOTTI_GRAY, 0);
+        st.state == APP_BCU_STATE_RUNNING ? ZOTTI_GREEN :
+        st.state == APP_BCU_STATE_ERROR   ? ZOTTI_RED   : ZOTTI_GRAY, 0);
 
-    const char *state_str = (st.state == APP_CAN_STATE_RUNNING) ? "RUN" :
-                            (st.state == APP_CAN_STATE_ERROR)   ? "ERR" : "STOP";
+    const char *state_str = (st.state == APP_BCU_STATE_RUNNING) ? "RUN" :
+                            (st.state == APP_BCU_STATE_ERROR)   ? "ERR" : "STOP";
     const char *log_label = (s_active_filter == IDX_CUSTOM)
                             ? "Custom"
                             : k_filters[s_active_filter].label;
@@ -184,7 +184,7 @@ static void update_status(void)
         (unsigned long)st.unique_ids,
         (unsigned long)st.frames,
         (unsigned long)st.rx_errors,
-        st.log_open ? app_can_sniffer_log_path() : (st.last_error[0] ? st.last_error : "---"));
+        st.log_open ? app_bcu_sniffer_log_path() : (st.last_error[0] ? st.last_error : "---"));
 }
 
 // ─────────────────────────────────────────────────────
@@ -446,10 +446,10 @@ static void toggle_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
     if (s_running) {
-        app_can_sniffer_stop();
+        app_bcu_sniffer_stop();
         s_running = false;
     } else {
-        esp_err_t err = app_can_sniffer_start();
+        esp_err_t err = app_bcu_sniffer_start();
         s_running = (err == ESP_OK);
     }
     set_toggle_appearance();
@@ -459,14 +459,14 @@ static void toggle_cb(lv_event_t *e)
 static void clear_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    app_can_clear_id_table();
+    app_bcu_clear_id_table();
     if (s_tbl) {
         lv_table_set_row_count(s_tbl, 0);
         s_prev_id_count = 0;
     }
 }
 
-static void open_sd_browser_from_sniffer(void) { ui_screen_sd_browser_show(ui_screen_can_sniffer_show); }
+static void open_sd_browser_from_sniffer(void) { ui_screen_sd_browser_show(ui_screen_bcu_monitor_show); }
 
 static void sd_browse_cb(lv_event_t *e)
 {
@@ -488,7 +488,7 @@ static void filter_btn_cb(lv_event_t *e)
 // Screen creation
 // ─────────────────────────────────────────────────────
 
-void ui_screen_can_sniffer_show(void)
+void ui_screen_bcu_monitor_show(void)
 {
     s_prev_id_count = 0;
     // s_active_filter, s_custom_min, s_custom_max intentionally persist
@@ -677,13 +677,13 @@ void ui_screen_can_sniffer_show(void)
     lv_table_set_row_count(s_tbl, 0);
 
     // Sync running state with actual sniffer (may have been started at boot)
-    app_can_status_t init_st;
-    app_can_sniffer_get_status(&init_st);
-    s_running = (init_st.state == APP_CAN_STATE_RUNNING);
+    app_bcu_status_t init_st;
+    app_bcu_sniffer_get_status(&init_st);
+    s_running = (init_st.state == APP_BCU_STATE_RUNNING);
 
     // Try to start if not already running
     if (!s_running) {
-        esp_err_t err = app_can_sniffer_start();
+        esp_err_t err = app_bcu_sniffer_start();
         s_running = (err == ESP_OK);
     }
 
@@ -697,7 +697,7 @@ void ui_screen_can_sniffer_show(void)
             fmin = k_filters[s_active_filter].min;
             fmax = k_filters[s_active_filter].max;
         }
-        app_can_set_filter(fmin, fmax);
+        app_bcu_set_filter(fmin, fmax);
     }
 
     set_toggle_appearance();

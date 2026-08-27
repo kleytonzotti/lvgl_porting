@@ -31,7 +31,7 @@ const char *ui_dash_accent_name(uint8_t idx);
 void ui_screen_scanner_show(void);
 void ui_screen_ecu_show(void);
 void ui_screen_can_show(void);
-void ui_screen_can_sniffer_show(void);
+void ui_screen_bcu_monitor_show(void);
 void ui_screen_sd_browser_show(void (*back_fn)(void));
 void ui_screen_datalogger_show(void);
 void ui_screen_config_show(void);

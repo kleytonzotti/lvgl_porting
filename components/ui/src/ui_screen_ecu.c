@@ -2,7 +2,7 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "app_ecu.h"
 #include "app_sim.h"
 
@@ -51,12 +51,12 @@ static void set_source(ecu_src_t src)
     // escutar assim que a fonte deixa de ser o OBD2. Aviso: reinstala o
     // driver e espera 100ms com a task do LVGL parada, mesmo custo que o
     // botao da tela do CAN/dashboard ja paga; aceitavel num toque deliberado.
-    if (s_source == ECU_SRC_CAN && app_can_obd2_is_active()) {
-        app_can_obd2_set_active(false);
+    if (s_source == ECU_SRC_CAN && app_bcu_obd2_is_active()) {
+        app_bcu_obd2_set_active(false);
     }
 
-    if (src == ECU_SRC_CAN && !app_can_obd2_is_active()) {
-        esp_err_t err = app_can_obd2_set_active(true);
+    if (src == ECU_SRC_CAN && !app_bcu_obd2_is_active()) {
+        esp_err_t err = app_bcu_obd2_set_active(true);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Nao foi possivel ativar o OBD2 (err=%d) — voltando pra ECU", (int)err);
             src = ECU_SRC_ECU;
@@ -163,8 +163,8 @@ static void update_values(lv_timer_t *timer)
     }
 
     if (s_source == ECU_SRC_CAN) {
-        app_can_obd2_data_t d;
-        app_can_obd2_get_data(&d);
+        app_bcu_obd2_data_t d;
+        app_bcu_obd2_get_data(&d);
         if (s_lbl_ble) {
             lv_label_set_text(s_lbl_ble, d.valid
                 ? LV_SYMBOL_WARNING "  CAN/OBD2 lendo (transmitindo)"
@@ -241,7 +241,7 @@ void ui_screen_ecu_show(void)
     // preferencia desta tela, mas app_can/app_sim tambem sao ligados por
     // OUTRAS telas (botao OBD2 da tela CAN, botao CAN/Demo do dashboard).
     // Mesmo criterio do dashboard: OBD2 no ar e a fonte mais "cara", ganha.
-    if (app_can_obd2_is_active()) {
+    if (app_bcu_obd2_is_active()) {
         s_source = ECU_SRC_CAN;
     } else if (s_source == ECU_SRC_CAN) {
         s_source = ECU_SRC_ECU;

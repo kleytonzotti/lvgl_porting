@@ -1,6 +1,6 @@
 #include "app_core.h"
 #include "app_io.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "app_ble.h"
 #include "app_ecu.h"
 #include "app_pedal_link.h"
@@ -25,8 +25,8 @@ void app_core_init(void)
     // pronta antes de inicializar qualquer um desses subsistemas.
     init_nvs();
     app_io_init();
-    app_can_init();
-    app_can_sniffer_start();  // fulltime: start collecting at boot
+    app_bcu_init();
+    app_bcu_sniffer_start();  // fulltime: start collecting at boot
     app_ble_init();
     app_ecu_init();
     // app_pedal_link_init() DESLIGADO DE PROPÓSITO: ela remapeia de verdade

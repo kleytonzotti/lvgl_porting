@@ -2,7 +2,7 @@
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "app_ecu.h"
 #include "app_sim.h"
 #include "app_dash_profile.h"
@@ -405,8 +405,8 @@ static void update_timer_cb(lv_timer_t *timer)
     }
 
     if (s_source == DASH_SRC_CAN) {
-        app_can_obd2_data_t d;
-        app_can_obd2_get_data(&d);
+        app_bcu_obd2_data_t d;
+        app_bcu_obd2_get_data(&d);
         // Aviso permanente enquanto a fonte for CAN: aqui o painel nao esta
         // so escutando, esta pedindo PID por PID no barramento.
         set_status(d.valid ? LV_SYMBOL_WARNING " CAN/OBD2 lendo (transmitindo)"
@@ -495,16 +495,16 @@ static void set_source(dash_src_t src)
 
     // Sair do modo CAN devolve o TWAI pro LISTEN_ONLY — o painel volta a so
     // escutar assim que a fonte deixa de ser o OBD2.
-    // Aviso: app_can_obd2_set_active() reinstala o driver e espera 100ms
+    // Aviso: app_bcu_obd2_set_active() reinstala o driver e espera 100ms
     // com a task do LVGL parada. E o mesmo custo que o botao da tela do CAN
     // ja paga; aceitavel num toque deliberado, mas nao chame isso de dentro
     // do timer de 33ms.
-    if (s_source == DASH_SRC_CAN && app_can_obd2_is_active()) {
-        app_can_obd2_set_active(false);
+    if (s_source == DASH_SRC_CAN && app_bcu_obd2_is_active()) {
+        app_bcu_obd2_set_active(false);
     }
 
-    if (src == DASH_SRC_CAN && !app_can_obd2_is_active()) {
-        esp_err_t err = app_can_obd2_set_active(true);
+    if (src == DASH_SRC_CAN && !app_bcu_obd2_is_active()) {
+        esp_err_t err = app_bcu_obd2_set_active(true);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Nao foi possivel ativar o OBD2 (err=%d) — voltando pra ECU", (int)err);
             src = DASH_SRC_ECU;
@@ -1189,7 +1189,7 @@ void ui_screen_dashboard_show(void)
     // que OUTRAS telas tambem ligam e desligam (o botao OBD2 da tela do CAN,
     // o botao Demo da tela da ECU). Sem isso, um botao daqui podia ficar
     // aceso apontando pra uma fonte que ja nao existe mais.
-    if (app_can_obd2_is_active()) {
+    if (app_bcu_obd2_is_active()) {
         s_source = DASH_SRC_CAN;          // OBD2 no ar: e a fonte mais "cara", ganha
     } else if (s_source == DASH_SRC_CAN) {
         s_source = DASH_SRC_ECU;          // desligado por fora enquanto estavamos fechados

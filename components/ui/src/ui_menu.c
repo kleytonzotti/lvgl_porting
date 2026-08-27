@@ -31,7 +31,7 @@ static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalo
 static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config_show); }
 static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
 static void cb_pedal(lv_event_t *e)      { LV_UNUSED(e); ui_nav(ui_screen_pedal_show); }
-static void cb_secret_sniffer(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_can_sniffer_show); }
+static void cb_secret_sniffer(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_bcu_monitor_show); }
 
 static void open_sd_browser_from_menu(void)  { ui_screen_sd_browser_show(ui_menu_show); }
 static void cb_sd_files(lv_event_t *e)       { LV_UNUSED(e); ui_nav(open_sd_browser_from_menu); }

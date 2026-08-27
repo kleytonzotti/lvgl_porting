@@ -1,4 +1,4 @@
-#include "app_can.h"
+#include "app_bcu.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -19,22 +19,22 @@
 #include "freertos/task.h"
 #include "sdmmc_cmd.h"
 
-#define APP_CAN_RX_QUEUE_LEN    128
-#define APP_CAN_TASK_STACK      4096
-#define APP_CAN_TASK_PRIORITY   6
-#define APP_CAN_SD_MOUNT        "/sdcard"
-#define APP_CAN_FLUSH_EVERY     32   // flush CSV to SD every N frames
+#define APP_BCU_RX_QUEUE_LEN    128
+#define APP_BCU_TASK_STACK      4096
+#define APP_BCU_TASK_PRIORITY   6
+#define APP_BCU_SD_MOUNT        "/sdcard"
+#define APP_BCU_FLUSH_EVERY     32   // flush CSV to SD every N frames
 
 // 8KB: o buffer local de listagem (48 entradas ~2.3KB) + a profundidade de
 // chamada do FATFS/VFS/SDSPI não cabem com folga numa stack de 4KB.
-#define APP_CAN_SD_TASK_STACK      8192
-#define APP_CAN_SD_TASK_PRIORITY   4
-#define APP_CAN_SD_REQ_QUEUE_LEN   4
+#define APP_BCU_SD_TASK_STACK      8192
+#define APP_BCU_SD_TASK_PRIORITY   4
+#define APP_BCU_SD_REQ_QUEUE_LEN   4
 
-static const char *TAG = "APP_CAN";
+static const char *TAG = "APP_BCU";
 
 // --- Per-ID table (protected by s_lock) ---
-static app_can_id_entry_t s_id_table[APP_CAN_MAX_IDS];
+static app_bcu_id_entry_t s_id_table[APP_BCU_MAX_IDS];
 static uint32_t           s_id_count = 0;
 
 // --- State ---
@@ -49,19 +49,19 @@ static bool              s_driver_started = false;
 static volatile bool     s_running        = false;
 static uint32_t          s_flush_counter  = 0;
 static char              s_log_path[40]   = "";
-static app_can_status_t  s_status         = {0};
+static app_bcu_status_t  s_status         = {0};
 
 // --- Software filter ---
 static volatile uint32_t s_filter_min = 0;
 static volatile uint32_t s_filter_max = 0x1FFFFFFF;
 
-// --- OBD2 ativo (ver app_can_obd2_set_active no header) ---
+// --- OBD2 ativo (ver app_bcu_obd2_set_active no header) ---
 // O round robin de PIDs e a decodificação das respostas moraram na tela do
 // CAN até agora; passaram pra cá pra que o dado sirva a QUALQUER consumidor
 // (o dashboard lê a mesma fonte) e continue vivo com a tela fechada.
-#define APP_CAN_OBD2_REQ_ID       0x7DFu   // broadcast Mode 01 (SAE J1979)
-#define APP_CAN_OBD2_RESP_ID      0x7E8u   // primeira ECU a responder
-#define APP_CAN_OBD2_REQ_PERIOD_MS 150     // um PID por vez, pra não inundar o barramento
+#define APP_BCU_OBD2_REQ_ID       0x7DFu   // broadcast Mode 01 (SAE J1979)
+#define APP_BCU_OBD2_RESP_ID      0x7E8u   // primeira ECU a responder
+#define APP_BCU_OBD2_REQ_PERIOD_MS 150     // um PID por vez, pra não inundar o barramento
 
 static const uint8_t k_obd2_pids[] = {
     0x0C,  // RPM
@@ -72,16 +72,16 @@ static const uint8_t k_obd2_pids[] = {
     0x11,  // TPS
     0x42,  // Tensão da bateria
 };
-#define APP_CAN_OBD2_PID_COUNT  (int)(sizeof(k_obd2_pids) / sizeof(k_obd2_pids[0]))
+#define APP_BCU_OBD2_PID_COUNT  (int)(sizeof(k_obd2_pids) / sizeof(k_obd2_pids[0]))
 
 static volatile bool s_obd2_active = false;
 // Pausa explícita da task de captura. Não dá pra reaproveitar s_running pra
 // isso: com o OBD2 ativo a task roda mesmo com o sniffer parado, então
 // zerar s_running não a pararia mais (ver o gate em can_sniffer_task).
 static volatile bool s_rx_paused   = false;
-static app_can_obd2_data_t s_obd2_data = {0};   // protegido por s_lock
+static app_bcu_obd2_data_t s_obd2_data = {0};   // protegido por s_lock
 
-// --- SD assíncrono (task dedicada — ver app_can_sd_async_* no header) ---
+// --- SD assíncrono (task dedicada — ver app_bcu_sd_async_* no header) ---
 typedef enum {
     SD_ASYNC_OP_MOUNT,
     SD_ASYNC_OP_LIST_DIR,
@@ -92,12 +92,12 @@ typedef enum {
 typedef struct {
     sd_async_op_t        op;
     char                  path[128];
-    app_can_sd_done_cb_t  on_done;
+    app_bcu_sd_done_cb_t  on_done;
 } sd_async_req_t;
 
 static QueueHandle_t      s_sd_req_queue   = NULL;
 static TaskHandle_t       s_sd_task        = NULL;
-static app_can_sd_entry_t s_async_dir_result[APP_CAN_SD_MAX_ENTRIES];
+static app_bcu_sd_entry_t s_async_dir_result[APP_BCU_SD_MAX_ENTRIES];
 static int                s_async_dir_count = -1;
 static esp_err_t          s_async_last_err  = ESP_OK;
 
@@ -105,17 +105,17 @@ static esp_err_t          s_async_last_err  = ESP_OK;
 // Internal helpers
 // ─────────────────────────────────────────────────────
 
-static app_can_id_entry_t *find_or_add_id_locked(uint32_t id, bool extd)
+static app_bcu_id_entry_t *find_or_add_id_locked(uint32_t id, bool extd)
 {
     for (uint32_t i = 0; i < s_id_count; i++) {
         if (s_id_table[i].id == id && s_id_table[i].extd == extd) {
             return &s_id_table[i];
         }
     }
-    if (s_id_count >= APP_CAN_MAX_IDS) {
+    if (s_id_count >= APP_BCU_MAX_IDS) {
         return NULL;
     }
-    app_can_id_entry_t *e = &s_id_table[s_id_count++];
+    app_bcu_id_entry_t *e = &s_id_table[s_id_count++];
     memset(e, 0, sizeof(*e));
     e->id   = id;
     e->extd = extd;
@@ -179,7 +179,7 @@ static esp_err_t do_sd_mount(bool format_if_failed)
         .allocation_unit_size   = 16 * 1024,
     };
 
-    esp_err_t err = esp_vfs_fat_sdspi_mount(APP_CAN_SD_MOUNT, &host,
+    esp_err_t err = esp_vfs_fat_sdspi_mount(APP_BCU_SD_MOUNT, &host,
                                              &slot_cfg, &mount_cfg, &s_sd_card);
     if (err == ESP_OK) {
         s_sd_mounted = true;
@@ -188,7 +188,7 @@ static esp_err_t do_sd_mount(bool format_if_failed)
     return err;
 }
 
-esp_err_t app_can_sd_mount(void)
+esp_err_t app_bcu_sd_mount(void)
 {
     return do_sd_mount(false);
 }
@@ -196,12 +196,12 @@ esp_err_t app_can_sd_mount(void)
 static void find_new_log_path(char *out, size_t sz)
 {
     for (int n = 1; n <= 999; n++) {
-        snprintf(out, sz, APP_CAN_SD_MOUNT "/can_%03d.csv", n);
+        snprintf(out, sz, APP_BCU_SD_MOUNT "/can_%03d.csv", n);
         FILE *f = fopen(out, "r");
         if (!f) return;   // file does not exist → use this slot
         fclose(f);
     }
-    snprintf(out, sz, APP_CAN_SD_MOUNT "/can_999.csv");
+    snprintf(out, sz, APP_BCU_SD_MOUNT "/can_999.csv");
 }
 
 static esp_err_t open_log_file_locked(void)
@@ -241,7 +241,7 @@ static void write_csv_locked(const char *line)
     if (s_log_file) {
         fputs(line, s_log_file);
         fputc('\n', s_log_file);
-        if (++s_flush_counter >= APP_CAN_FLUSH_EVERY) {
+        if (++s_flush_counter >= APP_BCU_FLUSH_EVERY) {
             fflush(s_log_file);
             s_flush_counter = 0;
         }
@@ -258,7 +258,7 @@ static esp_err_t ensure_twai_driver(void)
     if (!s_driver_ready) {
         twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(
             BSP_CAN_TX, BSP_CAN_RX, TWAI_MODE_LISTEN_ONLY);
-        g.rx_queue_len   = APP_CAN_RX_QUEUE_LEN;
+        g.rx_queue_len   = APP_BCU_RX_QUEUE_LEN;
         g.tx_queue_len   = 0;
         g.alerts_enabled = TWAI_ALERT_RX_DATA | TWAI_ALERT_RX_QUEUE_FULL |
                            TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF;
@@ -286,7 +286,7 @@ static esp_err_t ensure_twai_driver(void)
 
 static void obd2_decode_frame_locked(const twai_message_t *msg, uint32_t now_ms)
 {
-    if (msg->identifier != APP_CAN_OBD2_RESP_ID) return;
+    if (msg->identifier != APP_BCU_OBD2_RESP_ID) return;
     if (msg->data_length_code < 5 || msg->data[1] != 0x41) return;
 
     uint8_t pid = msg->data[2];
@@ -324,20 +324,20 @@ static void obd2_poll_step(uint32_t now_ms)
     if (!s_obd2_active) return;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_obd2_data.valid && (now_ms - s_obd2_data.last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+    if (s_obd2_data.valid && (now_ms - s_obd2_data.last_rx_ms) > APP_BCU_OBD2_STALE_MS) {
         ESP_LOGW(TAG, "[OBD2-STALE] Sem resposta por %ldms, marcando dados como inválidos",
                  (long)(now_ms - s_obd2_data.last_rx_ms));
         s_obd2_data.valid = false;
     }
     xSemaphoreGive(s_lock);
 
-    if ((now_ms - last_req_ms) < APP_CAN_OBD2_REQ_PERIOD_MS) return;
+    if ((now_ms - last_req_ms) < APP_BCU_OBD2_REQ_PERIOD_MS) return;
     last_req_ms = now_ms;
 
     uint8_t pid = k_obd2_pids[req_idx];
-    ESP_LOGI(TAG, "[OBD2-TX] Requisição %d/%d: PID=0x%02X", req_idx + 1, APP_CAN_OBD2_PID_COUNT, pid);
-    app_can_obd2_request_pid(pid);
-    req_idx = (req_idx + 1) % APP_CAN_OBD2_PID_COUNT;
+    ESP_LOGI(TAG, "[OBD2-TX] Requisição %d/%d: PID=0x%02X", req_idx + 1, APP_BCU_OBD2_PID_COUNT, pid);
+    app_bcu_obd2_request_pid(pid);
+    req_idx = (req_idx + 1) % APP_BCU_OBD2_PID_COUNT;
 }
 
 // ─────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ static void obd2_poll_step(uint32_t now_ms)
 static void can_sniffer_task(void *arg)
 {
     (void)arg;
-    char csv[APP_CAN_CSV_LINE_MAX];
+    char csv[APP_BCU_CSV_LINE_MAX];
 
     for (;;) {
         // Recebe enquanto o sniffer estiver rodando OU o OBD2 ativo — o
@@ -393,7 +393,7 @@ static void can_sniffer_task(void *arg)
 
         // Update per-ID table and frame counter
         xSemaphoreTake(s_lock, portMAX_DELAY);
-        app_can_id_entry_t *e = find_or_add_id_locked(msg.identifier, msg.extd);
+        app_bcu_id_entry_t *e = find_or_add_id_locked(msg.identifier, msg.extd);
         if (e) {
             if (e->count > 0 && e->last_ms > 0) {
                 uint32_t interval = now_ms - e->last_ms;
@@ -435,7 +435,7 @@ static void sd_worker_task(void *arg)
 
         switch (req.op) {
         case SD_ASYNC_OP_MOUNT: {
-            esp_err_t err = app_can_sd_mount();
+            esp_err_t err = app_bcu_sd_mount();
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_async_last_err = err;
             xSemaphoreGive(s_lock);
@@ -447,24 +447,24 @@ static void sd_worker_task(void *arg)
             // ~2.3KB de pilha em cima da profundidade de chamada do
             // FATFS/VFS/SDSPI; era um risco real de estouro de pilha).
             // Seguro sem lock durante o próprio list_dir: só quem lê esse
-            // buffer é app_can_sd_async_get_dir_result(), e só é lido
+            // buffer é app_bcu_sd_async_get_dir_result(), e só é lido
             // depois que req.on_done() dispara logo abaixo — nunca antes
             // desta chamada terminar.
-            int n = app_can_sd_list_dir(req.path, s_async_dir_result, APP_CAN_SD_MAX_ENTRIES);
+            int n = app_bcu_sd_list_dir(req.path, s_async_dir_result, APP_BCU_SD_MAX_ENTRIES);
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_async_dir_count = n;
             xSemaphoreGive(s_lock);
             break;
         }
         case SD_ASYNC_OP_DELETE: {
-            bool ok = app_can_sd_delete_file(req.path);
+            bool ok = app_bcu_sd_delete_file(req.path);
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_async_last_err = ok ? ESP_OK : ESP_FAIL;
             xSemaphoreGive(s_lock);
             break;
         }
         case SD_ASYNC_OP_FORMAT: {
-            esp_err_t err = app_can_sd_format();
+            esp_err_t err = app_bcu_sd_format();
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_async_last_err = err;
             xSemaphoreGive(s_lock);
@@ -484,7 +484,7 @@ static void sd_worker_task(void *arg)
     }
 }
 
-static bool sd_async_submit(sd_async_op_t op, const char *path, app_can_sd_done_cb_t on_done)
+static bool sd_async_submit(sd_async_op_t op, const char *path, app_bcu_sd_done_cb_t on_done)
 {
     if (!s_sd_req_queue) return false;
 
@@ -504,7 +504,7 @@ static bool sd_async_submit(sd_async_op_t op, const char *path, app_can_sd_done_
 // Public API
 // ─────────────────────────────────────────────────────
 
-esp_err_t app_can_init(void)
+esp_err_t app_bcu_init(void)
 {
     if (!s_lock) {
         s_lock = xSemaphoreCreateMutex();
@@ -512,7 +512,7 @@ esp_err_t app_can_init(void)
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_status.state       = APP_CAN_STATE_STOPPED;
+    s_status.state       = APP_BCU_STATE_STOPPED;
     s_status.driver_ready = false;
     s_status.sd_mounted  = false;
     s_status.log_open    = false;
@@ -521,19 +521,19 @@ esp_err_t app_can_init(void)
 
     if (!s_task) {
         BaseType_t ok = xTaskCreatePinnedToCore(can_sniffer_task, "can_sniff",
-                                                APP_CAN_TASK_STACK, NULL,
-                                                APP_CAN_TASK_PRIORITY, &s_task, 0);
+                                                APP_BCU_TASK_STACK, NULL,
+                                                APP_BCU_TASK_PRIORITY, &s_task, 0);
         if (ok != pdPASS) return ESP_ERR_NO_MEM;
     }
 
     if (!s_sd_req_queue) {
-        s_sd_req_queue = xQueueCreate(APP_CAN_SD_REQ_QUEUE_LEN, sizeof(sd_async_req_t));
+        s_sd_req_queue = xQueueCreate(APP_BCU_SD_REQ_QUEUE_LEN, sizeof(sd_async_req_t));
         if (!s_sd_req_queue) return ESP_ERR_NO_MEM;
     }
     if (!s_sd_task) {
         BaseType_t ok = xTaskCreate(sd_worker_task, "sd_worker",
-                                    APP_CAN_SD_TASK_STACK, NULL,
-                                    APP_CAN_SD_TASK_PRIORITY, &s_sd_task);
+                                    APP_BCU_SD_TASK_STACK, NULL,
+                                    APP_BCU_SD_TASK_PRIORITY, &s_sd_task);
         if (ok != pdPASS) return ESP_ERR_NO_MEM;
     }
 
@@ -541,13 +541,13 @@ esp_err_t app_can_init(void)
     return ESP_OK;
 }
 
-esp_err_t app_can_sniffer_start(void)
+esp_err_t app_bcu_sniffer_start(void)
 {
     if (s_running && s_status.log_open) return ESP_OK;  // fully running with log open
 
     // Running but no log (SD was missing at boot): retry SD mount + log open
     if (s_running) {
-        bool sd_ok = (app_can_sd_mount() == ESP_OK);
+        bool sd_ok = (app_bcu_sd_mount() == ESP_OK);
         xSemaphoreTake(s_lock, portMAX_DELAY);
         s_status.sd_mounted = sd_ok;
         if (sd_ok) {
@@ -565,19 +565,19 @@ esp_err_t app_can_sniffer_start(void)
     }
 
     if (!s_lock) {
-        ESP_RETURN_ON_ERROR(app_can_init(), TAG, "CAN init failed");
+        ESP_RETURN_ON_ERROR(app_bcu_init(), TAG, "CAN init failed");
     }
 
     esp_err_t err = ensure_twai_driver();
     if (err != ESP_OK) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
-        s_status.state = APP_CAN_STATE_ERROR;
+        s_status.state = APP_BCU_STATE_ERROR;
         snprintf(s_status.last_error, sizeof(s_status.last_error), "TWAI start failed");
         xSemaphoreGive(s_lock);
         return err;
     }
 
-    bool sd_ok  = (app_can_sd_mount() == ESP_OK);
+    bool sd_ok  = (app_bcu_sd_mount() == ESP_OK);
     bool log_ok = false;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -593,7 +593,7 @@ esp_err_t app_can_sniffer_start(void)
     } else {
         s_status.last_error[0] = '\0';
     }
-    s_status.state  = APP_CAN_STATE_RUNNING;
+    s_status.state  = APP_BCU_STATE_RUNNING;
     s_status.frames = 0;
     s_running = true;
     xSemaphoreGive(s_lock);
@@ -602,7 +602,7 @@ esp_err_t app_can_sniffer_start(void)
     return ESP_OK;
 }
 
-void app_can_sniffer_stop(void)
+void app_bcu_sniffer_stop(void)
 {
     s_running = false;
     // Wait for the CAN task to finish any in-progress write (receive timeout = 50ms)
@@ -610,23 +610,23 @@ void app_can_sniffer_stop(void)
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     close_log_file_locked();
-    s_status.state = APP_CAN_STATE_STOPPED;
+    s_status.state = APP_BCU_STATE_STOPPED;
     xSemaphoreGive(s_lock);
 
     ESP_LOGI(TAG, "Sniffer stopped — %lu frames", (unsigned long)s_status.frames);
 }
 
-uint32_t app_can_get_id_table(app_can_id_entry_t *out, uint32_t max_entries)
+uint32_t app_bcu_get_id_table(app_bcu_id_entry_t *out, uint32_t max_entries)
 {
     if (!out || !s_lock) return 0;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     uint32_t count = (s_id_count < max_entries) ? s_id_count : max_entries;
-    memcpy(out, s_id_table, count * sizeof(app_can_id_entry_t));
+    memcpy(out, s_id_table, count * sizeof(app_bcu_id_entry_t));
     xSemaphoreGive(s_lock);
     return count;
 }
 
-void app_can_clear_id_table(void)
+void app_bcu_clear_id_table(void)
 {
     if (!s_lock) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -637,19 +637,19 @@ void app_can_clear_id_table(void)
     xSemaphoreGive(s_lock);
 }
 
-void app_can_set_filter(uint32_t id_min, uint32_t id_max)
+void app_bcu_set_filter(uint32_t id_min, uint32_t id_max)
 {
     s_filter_min = id_min;
     s_filter_max = id_max;
 }
 
-void app_can_get_filter(uint32_t *id_min_out, uint32_t *id_max_out)
+void app_bcu_get_filter(uint32_t *id_min_out, uint32_t *id_max_out)
 {
     if (id_min_out) *id_min_out = s_filter_min;
     if (id_max_out) *id_max_out = s_filter_max;
 }
 
-void app_can_sniffer_get_status(app_can_status_t *out)
+void app_bcu_sniffer_get_status(app_bcu_status_t *out)
 {
     if (!out) return;
     if (s_lock) {
@@ -661,21 +661,21 @@ void app_can_sniffer_get_status(app_can_status_t *out)
     }
 }
 
-const char *app_can_sniffer_log_path(void)
+const char *app_bcu_sniffer_log_path(void)
 {
     return s_log_path[0] ? s_log_path : "---";
 }
 
-bool app_can_sd_is_mounted(void)
+bool app_bcu_sd_is_mounted(void)
 {
     return s_sd_mounted;
 }
 
-int app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files)
+int app_bcu_sd_list_csv(app_bcu_sd_file_t *out, uint32_t max_files)
 {
     if (!s_sd_mounted || !out) return -1;
 
-    DIR *dir = opendir(APP_CAN_SD_MOUNT);
+    DIR *dir = opendir(APP_BCU_SD_MOUNT);
     if (!dir) return -1;
 
     int count = 0;
@@ -695,7 +695,7 @@ int app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files)
         // Get size — usa o nome já truncado para que o compilador
         // possa verificar que full (64) cabe "/sdcard/" (8) + name (39) + \0
         char full[64];
-        snprintf(full, sizeof(full), APP_CAN_SD_MOUNT "/%s", out[count].name);
+        snprintf(full, sizeof(full), APP_BCU_SD_MOUNT "/%s", out[count].name);
         struct stat st;
         out[count].size_kb = (stat(full, &st) == 0) ? (uint32_t)(st.st_size / 1024) : 0;
         count++;
@@ -704,7 +704,7 @@ int app_can_sd_list_csv(app_can_sd_file_t *out, uint32_t max_files)
     return count;
 }
 
-int app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_entries)
+int app_bcu_sd_list_dir(const char *path, app_bcu_sd_entry_t *out, uint32_t max_entries)
 {
     if (!s_sd_mounted || !out || !path) return -1;
 
@@ -736,13 +736,13 @@ int app_can_sd_list_dir(const char *path, app_can_sd_entry_t *out, uint32_t max_
     return count;
 }
 
-bool app_can_sd_delete_file(const char *path)
+bool app_bcu_sd_delete_file(const char *path)
 {
     if (!path) return false;
     return (remove(path) == 0);
 }
 
-esp_err_t app_can_sd_format(void)
+esp_err_t app_bcu_sd_format(void)
 {
     if (!s_sd_mounted) {
         // Card not mounted: attempt mount with format_if_mount_failed=true.
@@ -755,34 +755,34 @@ esp_err_t app_can_sd_format(void)
     close_log_file_locked();
     xSemaphoreGive(s_lock);
 
-    esp_err_t err = esp_vfs_fat_sdcard_format(APP_CAN_SD_MOUNT, s_sd_card);
+    esp_err_t err = esp_vfs_fat_sdcard_format(APP_BCU_SD_MOUNT, s_sd_card);
     ESP_LOGI(TAG, "SD format: %s", esp_err_to_name(err));
     return err;
 }
 
 // --- SD assíncrono: só enfileira, a sd_worker_task faz o trabalho de verdade ---
 
-bool app_can_sd_async_mount(app_can_sd_done_cb_t on_done)
+bool app_bcu_sd_async_mount(app_bcu_sd_done_cb_t on_done)
 {
     return sd_async_submit(SD_ASYNC_OP_MOUNT, NULL, on_done);
 }
 
-bool app_can_sd_async_list_dir(const char *path, app_can_sd_done_cb_t on_done)
+bool app_bcu_sd_async_list_dir(const char *path, app_bcu_sd_done_cb_t on_done)
 {
     return sd_async_submit(SD_ASYNC_OP_LIST_DIR, path, on_done);
 }
 
-bool app_can_sd_async_delete_file(const char *path, app_can_sd_done_cb_t on_done)
+bool app_bcu_sd_async_delete_file(const char *path, app_bcu_sd_done_cb_t on_done)
 {
     return sd_async_submit(SD_ASYNC_OP_DELETE, path, on_done);
 }
 
-bool app_can_sd_async_format(app_can_sd_done_cb_t on_done)
+bool app_bcu_sd_async_format(app_bcu_sd_done_cb_t on_done)
 {
     return sd_async_submit(SD_ASYNC_OP_FORMAT, NULL, on_done);
 }
 
-int app_can_sd_async_get_dir_result(app_can_sd_entry_t *out, uint32_t max_entries)
+int app_bcu_sd_async_get_dir_result(app_bcu_sd_entry_t *out, uint32_t max_entries)
 {
     if (!out || !s_lock) return -1;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -798,7 +798,7 @@ int app_can_sd_async_get_dir_result(app_can_sd_entry_t *out, uint32_t max_entrie
     return (n > 0) ? (int)copy_n : n;
 }
 
-esp_err_t app_can_sd_async_get_last_err(void)
+esp_err_t app_bcu_sd_async_get_last_err(void)
 {
     if (!s_lock) return ESP_FAIL;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -814,10 +814,10 @@ esp_err_t app_can_sd_async_get_last_err(void)
 // em vez de só trocar uma flag.
 // ─────────────────────────────────────────────────────
 
-esp_err_t app_can_obd2_set_active(bool enable)
+esp_err_t app_bcu_obd2_set_active(bool enable)
 {
     if (!s_lock) {
-        ESP_RETURN_ON_ERROR(app_can_init(), TAG, "CAN init failed");
+        ESP_RETURN_ON_ERROR(app_bcu_init(), TAG, "CAN init failed");
     }
     if (enable == s_obd2_active && s_driver_started) return ESP_OK;
 
@@ -838,7 +838,7 @@ esp_err_t app_can_obd2_set_active(bool enable)
 
     twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(
         BSP_CAN_TX, BSP_CAN_RX, enable ? TWAI_MODE_NORMAL : TWAI_MODE_LISTEN_ONLY);
-    g.rx_queue_len   = APP_CAN_RX_QUEUE_LEN;
+    g.rx_queue_len   = APP_BCU_RX_QUEUE_LEN;
     g.tx_queue_len   = enable ? 4 : 0;
     g.alerts_enabled = TWAI_ALERT_RX_DATA | TWAI_ALERT_RX_QUEUE_FULL |
                        TWAI_ALERT_BUS_ERROR | TWAI_ALERT_BUS_OFF;
@@ -869,12 +869,12 @@ esp_err_t app_can_obd2_set_active(bool enable)
     return ESP_OK;
 }
 
-bool app_can_obd2_is_active(void)
+bool app_bcu_obd2_is_active(void)
 {
     return s_obd2_active;
 }
 
-void app_can_obd2_get_data(app_can_obd2_data_t *out)
+void app_bcu_obd2_get_data(app_bcu_obd2_data_t *out)
 {
     if (!out) return;
     if (!s_lock) { memset(out, 0, sizeof(*out)); return; }
@@ -886,7 +886,7 @@ void app_can_obd2_get_data(app_can_obd2_data_t *out)
     // A invalidação por silêncio também precisa valer pra quem lê com o
     // OBD2 desligado ou a task parada (aí obd2_poll_step não roda).
     uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-    if (out->valid && (now_ms - out->last_rx_ms) > APP_CAN_OBD2_STALE_MS) {
+    if (out->valid && (now_ms - out->last_rx_ms) > APP_BCU_OBD2_STALE_MS) {
         ESP_LOGW(TAG, "[OBD2-GET] Dados ficaram stale durante leitura (silence=%ldms)",
                  (long)(now_ms - out->last_rx_ms));
         out->valid = false;
@@ -900,7 +900,7 @@ void app_can_obd2_get_data(app_can_obd2_data_t *out)
     }
 }
 
-esp_err_t app_can_obd2_request_pid(uint8_t pid)
+esp_err_t app_bcu_obd2_request_pid(uint8_t pid)
 {
     if (!s_obd2_active || !s_driver_started) {
         ESP_LOGW(TAG, "[OBD2-TX] Ignorado: ativo=%d started=%d", s_obd2_active, s_driver_started);

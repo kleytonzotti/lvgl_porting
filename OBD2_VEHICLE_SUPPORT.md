@@ -94,7 +94,7 @@ typedef struct {
     int32_t ect_c;
     int32_t iat_c;
     float batt_v;
-} app_can_obd2_data_t;
+} app_bcu_obd2_data_t;
 ```
 
 Para expandir, adicionar:

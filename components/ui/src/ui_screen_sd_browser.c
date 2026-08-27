@@ -1,5 +1,5 @@
 #include "ui.h"
-#include "app_can.h"
+#include "app_bcu.h"
 #include "zotti_theme.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
@@ -10,7 +10,7 @@
 
 static const char *TAG = "UI_SD";
 
-#define MAX_ENTRIES  APP_CAN_SD_MAX_ENTRIES
+#define MAX_ENTRIES  APP_BCU_SD_MAX_ENTRIES
 #define SD_ROOT      "/sdcard"
 
 // ─────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ static lv_obj_t *s_lbl_status = NULL;
 static lv_obj_t *s_lbl_path   = NULL;
 static lv_obj_t *s_lbl_back   = NULL;
 
-static app_can_sd_entry_t s_entries[MAX_ENTRIES];
+static app_bcu_sd_entry_t s_entries[MAX_ENTRIES];
 static int                s_entry_count   = 0;
 static void             (*s_back_fn)(void) = NULL;
 static char               s_current_path[128];
@@ -71,7 +71,7 @@ static void apply_dir_result_async(void *arg)
     LV_UNUSED(arg);
     if (!s_scr) return;   // tela já foi fechada enquanto o pedido rodava
 
-    s_entry_count = app_can_sd_async_get_dir_result(s_entries, MAX_ENTRIES);
+    s_entry_count = app_bcu_sd_async_get_dir_result(s_entries, MAX_ENTRIES);
 
     // Trava de segurança: s_entries[] só tem MAX_ENTRIES posições — nunca
     // iterar além disso em build_list(), não importa o que a contagem diga.
@@ -120,8 +120,8 @@ static void request_reload(void)
                                     : LV_SYMBOL_LEFT " ..");
     }
 
-    app_can_sd_async_mount(NULL);
-    app_can_sd_async_list_dir(s_current_path, on_list_done_from_worker);
+    app_bcu_sd_async_mount(NULL);
+    app_bcu_sd_async_list_dir(s_current_path, on_list_done_from_worker);
 }
 
 // ─────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ static void apply_format_result_async(void *arg)
     LV_UNUSED(arg);
     if (!s_scr) return;
 
-    esp_err_t err = app_can_sd_async_get_last_err();
+    esp_err_t err = app_bcu_sd_async_get_last_err();
     if (s_lbl_status) {
         if (err == ESP_OK) {
             lv_label_set_text(s_lbl_status, "Formatado com sucesso!");
@@ -160,7 +160,7 @@ static void format_confirm_cb(lv_event_t *e)
     if (overlay) lv_obj_delete(overlay);
 
     if (s_lbl_status) lv_label_set_text(s_lbl_status, "Formatando...");
-    app_can_sd_async_format(on_format_done_from_worker);
+    app_bcu_sd_async_format(on_format_done_from_worker);
 }
 
 static void format_cancel_cb(lv_event_t *e)
@@ -284,7 +284,7 @@ static void delete_cb(lv_event_t *e)
     // O delete em si é rápido (um unlink), mas a listagem seguinte é que
     // precisa ir pela task de SD — então já reaproveita o mesmo caminho:
     // apaga de forma assíncrona e, ao terminar, pede a listagem de novo.
-    app_can_sd_async_delete_file(full_path, on_delete_done_from_worker);
+    app_bcu_sd_async_delete_file(full_path, on_delete_done_from_worker);
 }
 
 // ─────────────────────────────────────────────────────

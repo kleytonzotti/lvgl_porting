@@ -7,7 +7,7 @@ idf_component_register(
 
     REQUIRES
         app_io
-        app_can
+        app_bcu
         app_ble
         app_ecu
         app_pedal_link

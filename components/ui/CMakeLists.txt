@@ -11,7 +11,7 @@ idf_component_register(
         "src/ui_screen_scanner.c"
         "src/ui_screen_ecu.c"
         "src/ui_screen_can.c"
-        "src/ui_screen_can_sniffer.c"
+        "src/ui_screen_bcu_monitor.c"
         "src/ui_screen_sd_browser.c"
         "src/ui_screen_datalogger.c"
         "src/ui_screen_config.c"
@@ -26,7 +26,7 @@ idf_component_register(
         bsp_waveshare_43
         app_io
         app_core
-        app_can
+        app_bcu
         app_ble
         app_ecu
         app_sim
