@@ -67,7 +67,7 @@
 
 ### Protocolo CAN Atual
 ```c
-// Configuração existente em app_can.c
+// Configuração existente em app_bcu.c
 - Modo: TWAI_MODE_NORMAL (transmissão habilitada)
 - Velocidade: 500 kbps (padrão OBD2)
 - ID Requisição: 0x7DF (broadcast)

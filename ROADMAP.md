@@ -12,7 +12,7 @@
 │ PAINEL (este repo)        │ ◄───────────────────────────────  │ ECU PROGRAMÁVEL (nova)   │
 │ Waveshare ESP32-S3-4.3"   │                                    │ até 4 cilindros          │
 │ - Tela / LVGL             │        CAN (com outros módulos)   │ - Injeção/ignição        │
-│ - CAN sniffer (Vectra)    │ ◄────────────────────────────────►│ - Sensores motor         │
+│ - BCU Monitor (Vectra)    │ ◄────────────────────────────────►│ - Sensores motor         │
 │ - SD, BLE central         │                                    └──────────────────────────┘
 └─────────────┬─────────────┘
               │ UART/RS485 (heartbeat + modo / telemetria)
@@ -35,9 +35,9 @@ não um acidente de arquitetura.
 
 | Componente | Função | Status |
 |---|---|---|
-| `components/app_can/` | Sniffer CAN passivo (Vectra), log CSV no SD, task própria core 0 | Funcionando |
+| `components/app_bcu/` | Sniffer CAN passivo (Vectra), log CSV no SD, task própria core 0 | Funcionando |
 | `components/app_ble/` | Scan/connect BLE genérico (NimBLE) | Funcionando (scan/connect only, sem GATT client ainda) |
-| `components/ui/` | Telas LVGL (menu, dashboard, CAN sniffer, SD browser, config c/ scan BLE) | Funcionando |
+| `components/ui/` | Telas LVGL (menu, dashboard, BCU Monitor, SD browser, config c/ scan BLE) | Funcionando |
 | `components/app_ecu/` **(novo)** | Modelo de dados + parser do protocolo de telemetria BLE v1 (ver §4) | Parser completo, testado (Unity); **falta o GATT client** (ver §6) |
 | `components/app_pedal_link/` **(novo)** | Comunicação UART com o módulo de pedal via RS485 (GPIO43/44) | Parser completo e testado; ⚠️ **pino em conflito conhecido, ver §5** |
 | `components/app_sim/` **(novo)** | Modo demo/simulação — gera RPM/velocidade/aceleração/sondas plausíveis, ciclo com rajadas perto do corte | Funcionando, testado (Unity) |
@@ -45,7 +45,7 @@ não um acidente de arquitetura.
 | `ui_screen_ecu.c` | Tela "MONITOR ECU BLE" | Lê dados reais de `app_ecu` a cada 300ms (antes só mostrava "---") |
 | `ui_screen_dashboard.c` | Dashboard | 4 modelos de tela (Classic/Race/Grid/Duplo), config única persistida em NVS (editada em Configurações), efeito de "perto do corte", modo Demo, cor do acento do RPM (Grid) — ver §10 |
 | `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
-| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_bcu_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_can` (§6) |
+| `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_bcu_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_bcu` (§6) |
 | `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
 
 ### Código morto removido
@@ -61,7 +61,7 @@ apagados. `ui_screen_touch_create()` foi mantida: é usada de verdade por
 
 `ui_screen_sd_browser_show()` fazia montagem+listagem do cartão **de forma
 síncrona dentro da task do LVGL** (via `lv_async_call`, que só adia — não
-tira do mesmo thread). Corrigido: `app_can.c` agora tem uma **task dedicada
+tira do mesmo thread). Corrigido: `app_bcu.c` agora tem uma **task dedicada
 de SD** (`sd_worker_task`) + fila de pedidos (`app_bcu_sd_async_*` no
 header). `ui_screen_sd_browser.c` foi reescrito pra só enfileirar pedidos
 (mount/list/delete/format) e aplicar o resultado na tela via `lv_async_call`
@@ -145,7 +145,7 @@ transceiver RS485 da placa principal precisa de controle manual de direção
 
 Se em algum momento quiser ler o ECU **de fábrica** do Vectra via OBD2 (modo
 Mode 01), o CAN já está no barramento certo (500kbps, 11-bit — já configurado
-em `app_can.c`). Precisa trocar `TWAI_MODE_LISTEN_ONLY` → `TWAI_MODE_NORMAL`
+em `app_bcu.c`). Precisa trocar `TWAI_MODE_LISTEN_ONLY` → `TWAI_MODE_NORMAL`
 (listen-only não transmite). Requisição em `0x7DF`, resposta em `0x7E8+`:
 
 | PID | Nome | Fórmula |
@@ -162,7 +162,7 @@ Isso é **independente** da ECU programável — é uma segunda fonte de dados (
 carro de fábrica), não conflita com o app_ecu.
 
 **Implementado**: `app_bcu_obd2_set_active()`/`app_bcu_obd2_request_pid()`
-em `components/app_can/` — reinstala o driver TWAI em `TWAI_MODE_NORMAL`
+em `components/app_bcu/` — reinstala o driver TWAI em `TWAI_MODE_NORMAL`
 (transmite) quando ligado, volta pro `TWAI_MODE_LISTEN_ONLY` padrão quando
 desligado. **Desligado por padrão** — precisa ser ligado explicitamente
 (botão "Ativar OBD2" na aba Decoder da tela CAN, ou o botão "CAN" do
@@ -170,7 +170,7 @@ dashboard); até lá o painel continua só escutando, igual ao sniffer. Não
 testado em hardware real ainda (precisa do Vectra com ignição ligada
 respondendo Mode 01).
 
-**O round robin e a decodificação moram no `app_can`, não na UI** (mudou
+**O round robin e a decodificação moram no `app_bcu`, não na UI** (mudou
 nesta rodada — antes era um `lv_timer` dentro do `ui_screen_can.c`). Com o
 modo ativo, a própria task de captura pede um PID a cada 150ms e decodifica
 as respostas de `0x7E8` num snapshot (`app_bcu_obd2_get_data()`, struct
@@ -271,7 +271,7 @@ mesmo tempo"):
 |---|---|---|---|
 | nenhum aceso | ECU programável por BLE (padrão) | `app_ecu` | só escuta |
 | "Demo" (amarelo) | simulador local | `app_sim` | nada no barramento |
-| "CAN" (vermelho) | OBD2 Mode 01 do carro de fábrica | `app_can` (§6) | **transmite** |
+| "CAN" (vermelho) | OBD2 Mode 01 do carro de fábrica | `app_bcu` (§6) | **transmite** |
 
 O botão CAN é vermelho de propósito: é a única fonte em que o painel
 **transmite** no barramento (driver TWAI em `NORMAL`). Sair do modo CAN
@@ -279,7 +279,7 @@ devolve o TWAI pro `LISTEN_ONLY`. Diferente do BLE da ECU, o OBD2 traz
 velocidade de verdade (PID `0x0D`); em compensação, esta tabela de PIDs não
 tem lambda/AFR nem aceleração — vão zerados na `ui_screen_dashboard_update()`.
 
-Como `app_can`/`app_sim` também são ligados por **outras** telas (botão OBD2
+Como `app_bcu`/`app_sim` também são ligados por **outras** telas (botão OBD2
 da tela CAN, botão Demo da tela da ECU), `s_source` é só uma preferência: a
 cada `ui_screen_dashboard_show()` ela é reconciliada com o estado real dos
 componentes (OBD2 ativo ganha; senão segue `app_sim_is_enabled()`). Sem
@@ -291,7 +291,7 @@ deliberado de botão (é o mesmo custo que o botão da tela do CAN sempre
 pagou), mas **não** chame isso de dentro do timer de 33ms do dashboard.
 
 **Modo Demo** (`components/app_sim/`, completamente separado de
-`app_ecu`/`app_can` de propósito): liga
+`app_ecu`/`app_bcu` de propósito): liga
 uma simulação de ciclo de condução (fases idle → aceleração → cruzeiro →
 perto do corte → desaceleração, com filtro passa-baixa pra suavizar) gerando
 RPM, velocidade, aceleração longitudinal estimada, MAP, TPS, ECT (aquece aos

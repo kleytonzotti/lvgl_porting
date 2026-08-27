@@ -4,7 +4,7 @@ Todos os logs OBD2 estão **comentados** no código. Esta página documenta o qu
 
 ## Reativar Logs
 
-Para reativar um log específico, descomente a linha correspondente em [components/app_can/src/app_can.c](components/app_can/src/app_can.c).
+Para reativar um log específico, descomente a linha correspondente em [components/app_bcu/src/app_bcu.c](components/app_bcu/src/app_bcu.c).
 
 ---
 
@@ -161,13 +161,13 @@ Fluxo esperado (com todos ativados):
 
 | Log | Arquivo | Função | Linha | Use se... |
 |-----|---------|--------|-------|-----------|
-| `[OBD2-TX]` | app_can.c | `obd2_poll_step()` | ~338 | Quiser ver todas as requisições |
-| `[OBD2-RX]` | app_can.c | `obd2_decode_frame_locked()` | ~310 | Quiser validar decodificação |
-| `[OBD2-STALE]` | app_can.c | `obd2_poll_step()` | ~328 | Quiser ver timeouts |
-| `[OBD2-GET]` (stale) | app_can.c | `app_bcu_obd2_get_data()` | ~890 | Diagnosticar invalidação |
-| `[OBD2-GET]` (values) | app_can.c | `app_bcu_obd2_get_data()` | ~898 | Ver dados lidos a cada 1s |
-| `[OBD2]` | app_can.c | `app_bcu_obd2_set_active()` | ~867 | Confirmar ativação/desativação |
-| `[OBD2-TX] erros` | app_can.c | `app_bcu_obd2_request_pid()` | ~906, ~920 | Debugar falhas de TX |
+| `[OBD2-TX]` | app_bcu.c | `obd2_poll_step()` | ~338 | Quiser ver todas as requisições |
+| `[OBD2-RX]` | app_bcu.c | `obd2_decode_frame_locked()` | ~310 | Quiser validar decodificação |
+| `[OBD2-STALE]` | app_bcu.c | `obd2_poll_step()` | ~328 | Quiser ver timeouts |
+| `[OBD2-GET]` (stale) | app_bcu.c | `app_bcu_obd2_get_data()` | ~890 | Diagnosticar invalidação |
+| `[OBD2-GET]` (values) | app_bcu.c | `app_bcu_obd2_get_data()` | ~898 | Ver dados lidos a cada 1s |
+| `[OBD2]` | app_bcu.c | `app_bcu_obd2_set_active()` | ~867 | Confirmar ativação/desativação |
+| `[OBD2-TX] erros` | app_bcu.c | `app_bcu_obd2_request_pid()` | ~906, ~920 | Debugar falhas de TX |
 
 ---
 

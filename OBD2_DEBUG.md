@@ -84,6 +84,6 @@ idf.py -p /dev/ttyACM0 monitor 2>&1 | grep "\[OBD2-"
 ## Desabilitar logs (quando operacional)
 
 Se quiser remover esses logs no futuro (economizar UART bandwidth):
-1. Remover `ESP_LOGI/ESP_LOGW` das funções em `app_can.c`
+1. Remover `ESP_LOGI/ESP_LOGW` das funções em `app_bcu.c`
 2. Manter a lógica intacta
 3. Recompilar
