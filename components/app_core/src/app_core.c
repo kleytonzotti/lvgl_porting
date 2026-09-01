@@ -7,6 +7,7 @@
 #include "app_sim.h"
 #include "app_dash_profile.h"
 #include "app_dash_minmax.h"
+#include "app_map.h"
 #include "nvs_flash.h"
 
 static void init_nvs(void)
@@ -40,4 +41,5 @@ void app_core_init(void)
     app_sim_init();
     app_dash_profile_init();
     app_dash_minmax_init();
+    app_map_init();
 }

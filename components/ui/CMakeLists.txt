@@ -5,6 +5,7 @@ idf_component_register(
         "src/ui_splash.c"
         "src/ui_menu.c"
         "src/zotti_theme.c"
+        "src/zotti_brightness.c"
 
         # Telas principais
         "src/ui_screen_dashboard.c"
@@ -13,7 +14,7 @@ idf_component_register(
         "src/ui_screen_can.c"
         "src/ui_screen_bcu_monitor.c"
         "src/ui_screen_sd_browser.c"
-        "src/ui_screen_datalogger.c"
+        "src/ui_screen_map.c"
         "src/ui_screen_config.c"
         "src/ui_screen_sistema.c"
         "src/ui_screen_touch.c"
@@ -31,6 +32,7 @@ idf_component_register(
         app_ecu
         app_sim
         app_dash_profile
+        app_map
         app_pedal_link
         lvgl__lvgl
         esp_common

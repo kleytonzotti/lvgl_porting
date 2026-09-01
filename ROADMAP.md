@@ -47,7 +47,9 @@ não um acidente de arquitetura.
 | `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
 | `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_bcu_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_bcu` (§6) |
 | `ui_screen_bcu_trip.c` **(novo)** | Tela "COMPUTADOR DE BORDO" (menu, antigo "Scanner") — velocidade em destaque + distância/vel. média/vel. máxima/tempo de viagem, botão Zerar, indicador de Cruise Control | Fonte CAN (OBD2, padrão) ou Demo — sem opção ECU BLE porque `app_ecu` não carrega velocidade; distância integrada localmente (velocidade × dt) na própria tela, não persiste em NVS/SD; Cruise Control é só um indicador visual local, **nunca** um comando — ver regra de ouro do §1 |
-| `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
+| `components/app_map/` **(novo)** | Mapas de tunagem (injeção/ignição/sonda-lambda alvo), RPM x carga (kPa) — modelo de dados, cache local em NVS, framing do protocolo BLE de escrita (chunk+CRC16) | Lógica pura testada (Unity); `app_map_send_to_ecu()` é stub honesto — falta o GATT client de escrita, ver §13 |
+| `ui_screen_map.c` **(novo)** | Tela "MAPAS" (menu, antigo "Data Logger") — grade heatmap (estilo FuelTech/Injepro) com 3 abas Injeção(ms)/Ignição(°)/Sonda(lambda) por RPM x kPa, toque pra selecionar célula + passos, botão "Salvar Mapa" | Só grava (NVS local + tentativa de envio BLE) quando o usuário clica Salvar — editar não persiste nada sozinho; abas além da primeira só são construídas quando visitadas (pool de 64KB da LVGL, ver aviso em `ui_screen_map.c`); ver §13 pra por que isto é uma exceção deliberada à regra de ouro do §1 |
+| `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim, app_map (framing/CRC) |
 
 ### Código morto removido
 `ui_screen_calculos.c`, `ui_tabs.c`, `ui_screen_animacao.c`,
@@ -255,6 +257,19 @@ perfil em cima disso):
   não precisaram mudar — só passaram a ler uma variável em vez de uma
   constante). Independente da cor do acento do RPM acima — um é o esquema de
   cor de toda a UI, o outro é só o destaque do mostrador de RPM no Grid.
+- **"Brilho"** (`zotti_brightness.c`/`.h`, slider na seção DISPLAY da tela
+  de Config): ⚠️ **não é backlight PWM real** — este hardware não tem essa
+  fiação (`bsp_backlight_set()` é liga/desliga via CH422G, mesmo expansor
+  I2C do SD/touch/CAN select, não um pino PWM do ESP32; confirmado, não
+  existe outro caminho de dimming neste board). É esmaecimento por
+  software: uma superposição preta translúcida no `lv_layer_top()` da
+  LVGL (por cima de qualquer tela, sem mexer em cada uma), opacidade
+  inversamente proporcional ao valor escolhido, nunca preto total (piso
+  em 20% de "brilho" limita a opacidade máxima da superposição, senão
+  pareceria tela travada/desligada). Não desliga LED nenhum — consumo do
+  backlight continua o mesmo independente do valor. Persistido em NVS,
+  padrão de fábrica reduzido pra 70% (pedido explícito: "baixar o brilho"
+  já de cara, não só deixar a opção disponível).
 - **Efeito de corte**: quando RPM ≥ 90% do redline do perfil ativo, o número
   do RPM (e o arco, no Grid) piscam entre branco e vermelho (`lv_anim`, com
   histerese em 85% pra não ficar oscilando na borda).
@@ -370,3 +385,77 @@ display — ver skill `verify`/`run` pra isso).
 6. Opcional: scanner ELM327 via BLE (§12) — precisa definir o protocolo e
    desenhar uma tela nova do zero (a antiga foi substituída pelo Computador
    de Bordo), diferente do OBD2 direto sobre CAN que já foi implementado.
+7. Implementar o GATT **server** de escrita no firmware da ECU (STM32) e o
+   GATT **client** de escrita correspondente em `app_ble.c`/`app_map.c` (o
+   painel) pro protocolo do §13 funcionar de ponta a ponta — hoje só o
+   framing/CRC existe e é testado, nada é transmitido de verdade ainda.
+
+## 13. Mapas de tunagem (injeção/ignição/sonda) — exceção à regra de ouro do §1
+
+Decisão explícita tomada em sessão de 2026-08-31, não um acidente de
+arquitetura (a "regra de ouro" do §1 exige exatamente isso: qualquer
+mudança precisa ser revisada e registrada, não silenciosa).
+
+**O que muda:** até aqui o painel só assinava notificações da ECU (BLE
+notify, leitura). A partir de `components/app_map/` isso deixa de ser
+verdade só para os MAPAS de tunagem — três tabelas RPM x carga (MAP em
+kPa), mesmo conceito de VE table/ignition table/AFR target table do
+Speeduino/MegaSquirt/rusEFI já citados no §7:
+- **Injeção** — tempo de injeção (décimos de ms).
+- **Ignição** — avanço/retardo (décimos de grau, com sinal).
+- **Sonda** — lambda ALVO pra malha fechada (centésimos de lambda; ex.:
+  85 = 0.85, rico sob carga alta). Não confundir com o campo
+  `lambda`/`lambda_x1000` do `app_ecu` (§4), que é a leitura AO VIVO da
+  sonda — este mapa é o alvo que a ECU persegue, não uma leitura.
+
+O painel passa a poder **escrever** um mapa novo na ECU (protocolo
+completo, com framing BEGIN/CHUNK/END + CRC16, documentado em
+[`components/app_map/include/app_map.h`](components/app_map/include/app_map.h) —
+`table_id` 0=injeção, 1=ignição, 2=sonda, uma transferência por tabela).
+Telemetria (§4) e OBD2 (§6) continuam **só leitura**, sem mudança nenhuma
+— a exceção é só para este dado de calibração.
+
+**Como a segurança foi resolvida (decisão do usuário, não my default):**
+a ECU (firmware STM32, fora deste repo) é quem tem a palavra final — ela
+DEVE validar/clampar os valores recebidos contra limites físicos e
+**recusar gravar um mapa novo com o motor girando** (RPM > 0), só aceita
+com o motor parado. O protocolo já reserva o status
+`APP_MAP_STATUS_ERR_ENGINE_RUNNING` pra ECU comunicar essa recusa de volta
+ao painel. Essa validação mora inteiramente no firmware da ECU — não tem
+como o painel garantir isso remotamente, só pode confiar na resposta.
+
+**Estado atual (lado painel, este repo):**
+- Editor completo na tela "Mapas" (`ui_screen_map.c`) — grade heatmap
+  colorida (estilo FuelTech/Injepro) por RPM x kPa, uma aba por tabela,
+  toque pra selecionar célula, passos, só grava ao clicar "Salvar Mapa"
+  (nada persiste ao simplesmente editar). No máximo UMA aba tem sua grade
+  montada em LVGL por vez — trocar de aba destrói a grade da anterior e
+  constrói a nova (valores continuam intactos em `s_set`, só a UI é
+  recriada). Ver aviso grande no topo de `ui_screen_map.c`: dois
+  travamentos/reboots reais em hardware no mesmo dia (2026-08-31), os dois
+  pelo mesmo motivo raiz — o pool FIXO de 64KB da LVGL
+  (`CONFIG_LV_MEM_SIZE_KILOBYTES`, à parte dos 8MB de PSRAM da placa).
+  1º: célula = 2 objetos, as 2 abas construídas de uma vez de saída —
+  corrigido pra 1 objeto/célula + só construir a aba ativa. 2º: essa
+  primeira correção só adiava o estouro — trocar de aba ia SOMANDO grades
+  (nunca destruía a antiga), então visitar as 3 abas reproduzia o mesmo
+  estouro; corrigido destruindo a grade da aba anterior a cada troca.
+- Cache local em NVS (`app_map_save_local`/`app_map_get`) — sobrevive a
+  reabrir a tela, mas não é a cópia que manda de verdade (essa é a da
+  flash da ECU).
+- Protocolo de transferência (framing chunk + CRC16) implementado e
+  testado via Unity (`test_app/main/test_app_map.c`) — cobre
+  serialização, checksum por pacote e CRC16 contra vetor de teste padrão.
+- `app_map_send_to_ecu()` é um stub honesto: monta os pacotes de verdade
+  (testável) mas retorna `ESP_ERR_NOT_SUPPORTED` porque falta o GATT
+  client de escrita em `app_ble.c` — mesma pendência que o subscribe de
+  telemetria do §4 já tinha antes de existir a ECU de verdade.
+
+**Falta (lado ECU, fora deste repo):** o firmware STM32WB5MM-DK precisa
+implementar o GATT **server** com uma characteristic de escrita pro
+protocolo do `app_map.h`, decodificar BEGIN/CHUNK/END, validar CRC16,
+aplicar a trava de "motor parado", gravar na flash interna, e reler
+sozinho no boot. Guia passo a passo (STM32CubeIDE, protocolo byte a byte,
+pinos/hardware do simulador por potenciômetro, código de referência) em
+[`STM32_ECU_SIMULADOR_BLE.md`](STM32_ECU_SIMULADOR_BLE.md) — escrito pra
+ser colado numa sessão de IA separada, trabalhando no projeto STM32.

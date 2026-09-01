@@ -4,6 +4,7 @@ idf_component_register(
         "test_app_ecu.c"
         "test_app_pedal_link.c"
         "test_app_sim.c"
+        "test_app_map.c"
 
     INCLUDE_DIRS
         "."
@@ -13,4 +14,5 @@ idf_component_register(
         app_ecu
         app_pedal_link
         app_sim
+        app_map
 )

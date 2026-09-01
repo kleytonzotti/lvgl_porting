@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "zotti_theme.h"
+#include "zotti_brightness.h"
 #include "zotti_fonts.h"
 #include "esp_log.h"
 #include "app_ble.h"
@@ -19,6 +20,7 @@ static lv_obj_t *s_ble_status_lbl;
 static lv_timer_t *s_ble_timer;
 static app_ble_scan_result_t s_ble_devices[APP_BLE_MAX_SCAN_RESULTS];
 static uint32_t s_ble_device_count;
+static lv_obj_t *s_lbl_brilho;
 
 static void config_screen_delete_cb(lv_event_t *e)
 {
@@ -30,6 +32,7 @@ static void config_screen_delete_cb(lv_event_t *e)
     }
     s_ble_list_cont = NULL;
     s_ble_status_lbl = NULL;
+    s_lbl_brilho = NULL;
     s_scr = NULL;
 }
 
@@ -175,6 +178,17 @@ static void tema_dd_cb(lv_event_t *e)
     uint16_t sel = lv_dropdown_get_selected(dd);
     // A troca só aparece em telas abertas depois disso — ver zotti_theme.h.
     zotti_theme_set((zotti_theme_id_t)sel);
+}
+
+// Este hardware não tem PWM de backlight (é liga/desliga via CH422G, ver
+// zotti_brightness.h) — "Brilho" aqui é esmaecimento por software, efeito
+// imediato em qualquer tela já aberta (superposição no layer superior).
+static void brilho_slider_cb(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    int32_t val = lv_slider_get_value(slider);
+    zotti_brightness_set((uint8_t)val);
+    if (s_lbl_brilho) lv_label_set_text_fmt(s_lbl_brilho, "%d%%", (int)val);
 }
 
 // ─────────────────────────────────────────────────────
@@ -360,6 +374,30 @@ void ui_screen_config_show(void)
     lv_obj_set_style_text_color(dd_tema, ZOTTI_WHITE, 0);
     lv_obj_set_style_text_font(dd_tema, ZOTTI_FONT_TINY, 0);
     lv_obj_add_event_cb(dd_tema, tema_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Brilho (slider) — esmaecimento por software, ver zotti_brightness.h
+    // pra por que este hardware nao tem PWM de backlight de verdade.
+    lv_obj_t *row_brilho = add_row(scroll, "Brilho");
+    lv_obj_t *slider_brilho = lv_slider_create(row_brilho);
+    lv_obj_set_size(slider_brilho, 150, 12);
+    lv_obj_align(slider_brilho, LV_ALIGN_RIGHT_MID, -70, 0);
+    lv_slider_set_range(slider_brilho, ZOTTI_BRIGHTNESS_MIN, ZOTTI_BRIGHTNESS_MAX);
+    lv_slider_set_value(slider_brilho, zotti_brightness_get(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider_brilho, ZOTTI_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider_brilho, ZOTTI_ACCENT, LV_PART_KNOB);
+    lv_obj_add_event_cb(slider_brilho, brilho_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    s_lbl_brilho = lv_label_create(row_brilho);
+    lv_label_set_text_fmt(s_lbl_brilho, "%u%%", (unsigned)zotti_brightness_get());
+    lv_obj_set_style_text_font(s_lbl_brilho, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_lbl_brilho, ZOTTI_WHITE, 0);
+    lv_obj_align(s_lbl_brilho, LV_ALIGN_RIGHT_MID, -10, 0);
+
+    lv_obj_t *lbl_brilho_note = lv_label_create(scroll);
+    lv_label_set_text(lbl_brilho_note,
+        "  (esmaecimento por software — este hardware nao tem PWM de backlight real)");
+    lv_obj_set_style_text_font(lbl_brilho_note, ZOTTI_FONT_TINY, 0);
+    lv_obj_set_style_text_color(lbl_brilho_note, ZOTTI_GRAY, 0);
 
     // Secao: Dashboard — Estilo, Modelo e Corte do mostrador (antes ficava
     // numa tela de "Perfis" separada, aberta de dentro do dashboard; agora

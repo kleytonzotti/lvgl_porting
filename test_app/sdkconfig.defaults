@@ -1,0 +1,8 @@
+# Sem isso o target default do ESP-IDF e "esp32" (nao "esp32s3") — o
+# projeto principal fixa isso via sdkconfig.defaults (raiz do repo), mas
+# test_app e um projeto CMake separado (project.cmake proprio) e nao herda
+# esse arquivo. Sem o target certo, bsp_waveshare_43.c falha ao compilar
+# (esp_lcd_panel_rgb.h so existe pra esp32s3) mesmo test_app nao precisando
+# de LCD nenhum — o build de teste ainda compila o repo inteiro (ver
+# ROADMAP.md §11), so nao com o chip certo.
+CONFIG_IDF_TARGET="esp32s3"

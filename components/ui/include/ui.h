@@ -33,7 +33,7 @@ void ui_screen_ecu_show(void);
 void ui_screen_can_show(void);
 void ui_screen_bcu_monitor_show(void);
 void ui_screen_sd_browser_show(void (*back_fn)(void));
-void ui_screen_datalogger_show(void);
+void ui_screen_map_show(void);
 void ui_screen_config_show(void);
 void ui_screen_sistema_show(void);
 void ui_screen_pedal_show(void);

@@ -27,7 +27,7 @@ static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_screen_dashbo
 static void cb_bcu_trip(lv_event_t *e)   { LV_UNUSED(e); ui_nav(ui_screen_bcu_trip_show); }
 static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_ecu_show); }
 static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_can_show); }
-static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalogger_show); }
+static void cb_map(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_map_show); }
 static void cb_config(lv_event_t *e)     { LV_UNUSED(e); ui_nav(ui_screen_config_show); }
 static void cb_sistema(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_sistema_show); }
 static void cb_pedal(lv_event_t *e)      { LV_UNUSED(e); ui_nav(ui_screen_pedal_show); }
@@ -135,7 +135,7 @@ void ui_menu_show(void)
     create_menu_btn(grid, LV_SYMBOL_GPS,        "Computador de Bordo", cb_bcu_trip);
     create_menu_btn(grid, LV_SYMBOL_SETTINGS,   "ECU",          cb_ecu);
     create_menu_btn(grid, LV_SYMBOL_LIST,       "CAN",          cb_can);
-    create_menu_btn(grid, LV_SYMBOL_SAVE,       "Data Logger",  cb_datalogger);
+    create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Mapas",        cb_map);
     //create_menu_btn(grid, LV_SYMBOL_DIRECTORY,  "Arquivos SD",  cb_sd_files);
     create_menu_btn(grid, LV_SYMBOL_EDIT,       "Configuracoes", cb_config);
     create_menu_btn(grid, LV_SYMBOL_HOME,       "Sistema",      cb_sistema);
