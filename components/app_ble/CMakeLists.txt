@@ -7,4 +7,5 @@ idf_component_register(
 
     REQUIRES
         bt
+        app_map_debug_ble
 )

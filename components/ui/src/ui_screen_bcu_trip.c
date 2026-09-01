@@ -128,7 +128,7 @@ static void cruise_toggle_cb(lv_event_t *e)
         lv_obj_set_style_bg_color(s_btn_cruise, s_cruise_on ? ZOTTI_GREEN : ZOTTI_BG_CARD, 0);
     }
     if (s_lbl_cruise_val) {
-        lv_label_set_text(s_lbl_cruise_val, s_cruise_on ? "CRUISE: ON (indicativo)" : "CRUISE: OFF");
+        lv_label_set_text(s_lbl_cruise_val, s_cruise_on ? "CRUISE: ON" : "CRUISE: OFF");
         lv_obj_set_style_text_color(s_lbl_cruise_val, s_cruise_on ? ZOTTI_GREEN : ZOTTI_GRAY, 0);
     }
 }

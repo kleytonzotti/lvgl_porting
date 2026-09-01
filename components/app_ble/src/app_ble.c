@@ -11,6 +11,7 @@
 #include "host/ble_hs_adv.h"
 #include "host/ble_gap.h"
 #include "services/gap/ble_svc_gap.h"
+#include "app_map_debug_ble.h"  // DEBUG TEMPORARIO — ver app_map_debug_ble.h pra como remover
 
 static const char *TAG = "APP_BLE";
 static volatile bool s_ready = false;
@@ -43,6 +44,8 @@ static void ble_on_sync(void)
     ble_hs_id_infer_auto(0, &s_own_addr_type);
     s_ready = true;
     set_status(APP_BLE_STATE_IDLE, "Pronto");
+
+    app_map_debug_ble_start_advertising();  // DEBUG TEMPORARIO
 }
 
 static void ble_host_task(void *param)
@@ -140,6 +143,8 @@ esp_err_t app_ble_init(void)
 
     ble_svc_gap_init();
     ble_svc_gap_device_name_set("ZOTTI-ECU");
+
+    app_map_debug_ble_register_gatt();  // DEBUG TEMPORARIO — precisa vir antes do host comecar a rodar
 
     set_status(APP_BLE_STATE_IDLE, "Inicializando...");
 

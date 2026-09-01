@@ -60,6 +60,15 @@ static const char *TAG = "UI_MAP";
 //      porque falta o GATT client de escrita (ver app_map.h) — a tela
 //      mostra isso honestamente, não finge que enviou.
 //
+// ⚠️ A ECU é a fonte de VERDADE, o cache local é só uma QUEDA (2026-09-01):
+// abrir esta tela SEMPRE tenta ler o mapa atual da ECU primeiro
+// (sync_from_ecu(), via app_map_read_from_ecu() — RequestUpload do UDS,
+// ver app_map.h) antes de deixar editar qualquer coisa. Só cai pro cache
+// local em NVS se a ECU não responder (hoje sempre, pela mesma pendência
+// de GATT client acima), e a barra de status avisa claramente qual dos
+// dois está mostrando — nunca finge que o cache local é dado confirmado
+// pela ECU quando não é.
+//
 // Isto é uma EXCEÇÃO deliberada à regra "painel nunca escreve na ECU"
 // (ROADMAP.md §1/§13) — decisão explícita, não acidente de arquitetura.
 // A validação de segurança final (recusar gravar com motor girando etc.)
@@ -226,6 +235,12 @@ static void update_sel_label(app_map_table_id_t tid)
     map_tab_ui_t *tab = &s_tab[tid];
     if (!tab->lbl_sel) return;
 
+    // Guard restaurado (2026-09-01): sem isso, sel_row/sel_col == -1 (nada
+    // selecionado ainda) faz s_set.rpm_bins[-1]/load_kpa_bins[-1] — leitura
+    // fora dos limites do array. Hoje nenhum chamador desta funcao invoca
+    // com selecao invalida (select_cell sempre seta indices validos antes;
+    // step_cb tem seu proprio guard), mas e facil um caminho novo (ex.:
+    // atualizar o rotulo apos sincronizar com a ECU) chamar sem selecao.
     if (tab->sel_row < 0 || tab->sel_col < 0) {
         lv_label_set_text(tab->lbl_sel, "Toque numa celula do grafico pra selecionar");
         return;
@@ -318,7 +333,7 @@ static void salvar_cb(lv_event_t *e)
     } else {
         lv_label_set_text(s_lbl_status,
             LV_SYMBOL_WARNING "  Salvo localmente. Envio BLE indisponivel (GATT client de escrita ainda nao implementado)");
-        lv_obj_set_style_text_color(s_lbl_status, ZOTTI_YELLOW, 0);
+        lv_obj_set_style_text_color(s_lbl_status, ZOTTI_RED, 0);
     }
 }
 
@@ -423,7 +438,7 @@ static void build_map_tab(lv_obj_t *parent, app_map_table_id_t tid)
     // (ex.: delta bruto 10 vira "+1.00" pra ms/graus mas "+0.10" pra lambda)
     // — evita precisar de um array de textos por tabela.
     static const int16_t deltas[4] = {-10, -1, 1, 10};
-    int32_t btn_x[4] = {5, 130, 255, 380};
+    int32_t btn_x[4] = {5, 130, 250, 380};// TODO: ajustar em hardcode
     for (int i = 0; i < 4; i++) {
         s_step_ctx[tid][i].tid   = tid;
         s_step_ctx[tid][i].delta = deltas[i];
@@ -522,9 +537,33 @@ static void tabview_changed_cb(lv_event_t *e)
              (unsigned)idx, (unsigned)mon.used_pct, (unsigned)mon.free_biggest_size);
 }
 
+// A ECU e a fonte de verdade do mapa (ela persiste na propria flash e le
+// sozinha no boot — ver ROADMAP.md §13). O painel NUNCA deve assumir que o
+// cache local em NVS e o dado atual sem tentar ler da ECU primeiro — por
+// isso toda abertura desta tela passa por aqui antes de deixar editar
+// qualquer coisa. Hoje app_map_read_from_ecu() e um stub (falta o GATT
+// client), entao 'synced' sempre vem false na pratica — mas o fallback
+// pro cache local ja fica pronto pro dia que o transporte existir de
+// verdade, e a tela avisa honestamente qual dos dois esta mostrando.
+static bool sync_from_ecu(app_map_set_t *out)
+{
+    app_map_get(out);  // base: cache local (eixos + ultimo valor conhecido)
+
+    bool all_ok = true;
+    for (int t = 0; t < APP_MAP_TABLE_COUNT; t++) {
+        if (app_map_read_from_ecu((app_map_table_id_t)t, out) != ESP_OK) {
+            all_ok = false;
+        }
+    }
+    if (all_ok) {
+        app_map_save_local(out);  // ECU manda: atualiza o cache local com o que veio dela
+    }
+    return all_ok;
+}
+
 void ui_screen_map_show(void)
 {
-    app_map_get(&s_set);
+    bool synced = sync_from_ecu(&s_set);
     s_dirty = false;
 
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -573,10 +612,16 @@ void ui_screen_map_show(void)
     lv_obj_clear_flag(action_bar, LV_OBJ_FLAG_SCROLLABLE);
 
     s_lbl_status = lv_label_create(action_bar);
-    lv_label_set_text(s_lbl_status, "Edite uma celula e clique em Salvar Mapa");
     lv_obj_set_style_text_font(s_lbl_status, ZOTTI_FONT_TINY, 0);
-    lv_obj_set_style_text_color(s_lbl_status, ZOTTI_GRAY, 0);
     lv_obj_align(s_lbl_status, LV_ALIGN_LEFT_MID, 15, 0);
+    if (synced) {
+        lv_label_set_text(s_lbl_status, LV_SYMBOL_OK "  Sincronizado com a ECU");
+        lv_obj_set_style_text_color(s_lbl_status, ZOTTI_GREEN, 0);
+    } else {
+        lv_label_set_text(s_lbl_status,
+            LV_SYMBOL_WARNING "  ECU nao responde");
+        lv_obj_set_style_text_color(s_lbl_status, ZOTTI_YELLOW, 0);
+    }
 
     lv_obj_t *btn_salvar = lv_btn_create(action_bar);
     lv_obj_set_size(btn_salvar, 180, 30);

@@ -84,12 +84,32 @@ o MTU padrão (ATT_MTU 23 → 20 bytes úteis), não precisa fragmentar.
 Envie este frame periodicamente (sugestão: a cada 100-300ms) pela
 characteristic de notify de telemetria (UUID proposto em §4).
 
-### 3.2 Mapas de tunagem (Painel → ECU, escrita) + status (ECU → Painel, notify)
+### 3.2 Mapas de tunagem (Painel → ECU) — protocolo UDS (ISO 14229-1)
 
 Definido em `components/app_map/include/app_map.h` do repo do painel.
 **Isto é uma exceção deliberada e revisada** à regra de "painel nunca
 escreve na ECU" (documentada em `ROADMAP.md` §1 e §13 do repo do painel)
 — o painel manda o mapa, mas **a ECU decide se aceita**.
+
+**Este NÃO é um protocolo inventado do zero.** É baseado no **UDS —
+Unified Diagnostic Services (ISO 14229-1)**, o protocolo automotivo real
+usado por ferramentas de concessionária/oficina pra gravar calibração
+numa ECU. Os Service IDs, subfunções e códigos de erro abaixo são os REAIS
+do padrão — pesquisados e confirmados, não inventados (ver fontes no
+final desta seção). A única parte que não é "oficial" é o transporte:
+UDS normalmente roda sobre CAN (com fragmentação ISO-TP, ISO 15765-2) ou
+sobre Ethernet (DoIP); aqui adaptamos pra BLE GATT, que não precisa da
+fragmentação do ISO-TP porque cada PDU já é dimensionado pra caber num
+único pacote BLE.
+
+**Por que UDS e não XCP** (o outro protocolo automotivo de calibração,
+ASAM MCD-1 XCP): XCP foi feito pra tunagem AO VIVO, motor rodando
+(measure-and-adjust em tempo real). Este projeto decidiu o oposto — só
+aceita gravar um mapa novo com o motor PARADO (ver §3 abaixo). Isso é
+exatamente o caso de uso do fluxo RequestDownload/TransferData/
+RequestTransferExit do UDS: reflash de calibração em "modo de serviço",
+não ajuste em tempo real. A escolha de protocolo segue a decisão de
+segurança já tomada, não o contrário.
 
 Constantes:
 ```
@@ -98,26 +118,20 @@ APP_MAP_LOAD_BINS  = 6    // pontos no eixo carga (kPa)
 ```
 
 Três tabelas possíveis (mesmo eixo RPM x kPa, cada uma sua própria
-transferência BEGIN/CHUNK/END — `table_id` abaixo):
+sequência de transferência — endereço lógico de 16 bits, não é endereço
+de flash real, ver `RequestDownload` abaixo):
 
-Tabela de injeção (`table_id=0x00`): valores em **décimos de milissegundo**
-(int16), ex.: `42` = 4.2ms. Faixa válida: `5` a `300` (0.5ms a 30.0ms) —
-**qualquer valor fora disso deve ser clampado ou rejeitado pela ECU**,
-nunca aplicado cru.
+| Tabela | Endereço lógico | Unidade | Faixa válida |
+|---|---|---|---|
+| Injeção | `0x0000` | décimos de ms (ex.: `42`=4.2ms) | `5` a `300` (0.5–30.0ms) |
+| Ignição | `0x0001` | décimos de grau, com sinal (ex.: `150`=15.0°, `-20`=-2.0°) | `-100` a `600` (-10.0° a 60.0°) |
+| Sonda (lambda alvo) | `0x0002` | centésimos de lambda (ex.: `85`=0.85 rico, `100`=1.00 estequiométrico) | `60` a `130` (0.60–1.30) |
 
-Tabela de ignição (`table_id=0x01`): valores em **décimos de grau** (int16,
-com sinal), ex.: `150` = 15.0° (avanço), `-20` = -2.0° (retardo). Faixa
-válida: `-100` a `600` (-10.0° a 60.0°) — mesma regra de clamping/rejeição.
+**Qualquer valor fora da faixa deve ser clampado ou rejeitado pela ECU,
+nunca aplicado cru.**
 
-Tabela de sonda (`table_id=0x02`): lambda **alvo** pra malha fechada
-(closed-loop) — não é a leitura ao vivo da sonda, é o valor que a ECU
-persegue em cada ponto de RPM/carga. Valores em **centésimos de lambda**
-(int16), ex.: `85` = 0.85 (rico, plena carga/boost), `100` = 1.00
-(estequiométrico). Faixa válida: `60` a `130` (lambda 0.60 a 1.30) — mesma
-regra de clamping/rejeição.
-
-Buffer serializado de UMA tabela (o que viaja fatiado nos pacotes
-MAP_CHUNK abaixo), **nesta ordem exata**, tudo little-endian:
+Buffer serializado de UMA tabela (o que viaja fatiado nos `TransferData`
+abaixo), **nesta ordem exata**, tudo little-endian:
 ```
 rpm_bins[8]        uint16 x 8  = 16 bytes   (eixo RPM, crescente)
 load_kpa_bins[6]   uint16 x 6  = 12 bytes   (eixo carga/MAP, crescente)
@@ -125,49 +139,103 @@ celulas[6][8]      int16 x 48 = 96 bytes    (linha=carga, coluna=RPM)
                                 = 124 bytes total (APP_MAP_SERIALIZED_LEN)
 ```
 
-#### Pacotes Painel → ECU (characteristic de escrita), todos com esta forma:
+#### Sequência completa (painel = "tester", ECU = "server" — nomenclatura
+do próprio padrão)
 
+Cada PDU abaixo é UM write ou UM notify BLE só (sem fragmentação — já
+dimensionamos cada um pra caber). Resposta positiva = SID pedido + `0x40`
+(ex.: `0x34` responde `0x74`). Resposta negativa = **sempre** `0x7F`
+seguido do SID original e um código de erro (NRC) — ver tabela de NRCs
+mais abaixo.
+
+**1) DiagnosticSessionControl — entra em modo de gravação**
 ```
-Byte 0:      0xEA                marcador (comando de mapa)
-Byte 1:      0x01                versão
-Byte 2:      msg_type            0x01=BEGIN 0x02=CHUNK 0x03=END 0x04=ABORT
-Byte 3..N-2: payload específico do tipo (ver abaixo)
-Byte N-1:    checksum = XOR de TODOS os bytes anteriores DESTE pacote
+Painel → ECU:  [0x10] [0x02]              (0x02 = programmingSession)
+ECU → Painel:  [0x50] [0x02] [...]        (positiva) OU
+               [0x7F] [0x10] [NRC]        (negativa)
+```
+⚠️ **A ECU DEVE recusar aqui** (NRC `0x22 conditionsNotCorrect`) **se o
+motor estiver girando.** Este é o primeiro e principal ponto de recusa —
+ver §3.
+
+**2) SecurityAccess — seed/key (nível 1)**
+```
+Painel → ECU:  [0x27] [0x01]                       (pede seed)
+ECU → Painel:  [0x67] [0x01] [seed_lo] [seed_hi]    (16 bits, gerado pela ECU)
+
+Painel → ECU:  [0x27] [0x02] [key_lo] [key_hi]      (key calculada do seed)
+ECU → Painel:  [0x67] [0x02]                        (positiva: acesso liberado) OU
+               [0x7F] [0x27] [NRC]                  (0x35 invalidKey, 0x33 securityAccessDenied)
+```
+⚠️ **O algoritmo seed→key abaixo é uma transformação simples DE
+DEMONSTRAÇÃO, não é criptografia real.** O objetivo é impedir que
+qualquer app BLE genérico escreva um mapa por acidente/curiosidade — não
+resistir a um atacante que capturou o tráfego BLE. Troque por algo mais
+forte antes de qualquer uso além de bancada.
+```c
+// Mesmo algoritmo dos dois lados — se um lado mudar sem o outro, toda
+// escrita de mapa passa a falhar com invalidKey.
+uint16_t compute_key(uint16_t seed)
+{
+    uint16_t rotated = (uint16_t)((seed << 3) | (seed >> 13));
+    return (uint16_t)(rotated ^ 0xA5A5);
+}
 ```
 
-**MAP_BEGIN** (9 bytes total):
+**3) RequestDownload — declara qual tabela e o tamanho**
 ```
-[3]   table_id        0x00=injecao  0x01=ignicao  0x02=sonda
-[4]   rpm_bins_count   (deve ser 8 — rejeite se vier diferente)
-[5]   load_bins_count  (deve ser 6 — rejeite se vier diferente)
-[6-7] total_len        uint16 LE — deve ser 124 (APP_MAP_SERIALIZED_LEN)
-[8]   checksum
-```
+Painel → ECU:  [0x34] [0x00] [0x22] [addr_lo] [addr_hi] [size_lo] [size_hi]
+               dataFormatIdentifier=0x00 (sem compressão)
+               addressAndLengthFormatIdentifier=0x22 (2 bytes endereço + 2 bytes tamanho)
+               addr = endereço lógico da tabela (ver tabela acima)
+               size = sempre 124 (APP_MAP_SERIALIZED_LEN)
 
-**MAP_CHUNK** (até 23 bytes total, dado variável até 16 bytes):
+ECU → Painel:  [0x74] [lengthFormatId] [maxBlockLen...]   (positiva) OU
+               [0x7F] [0x34] [NRC]                         (0x22, 0x31 requestOutOfRange, 0x70)
 ```
-[3-4] seq        uint16 LE, começa em 0, incrementa 1 por pacote
-[5]   len        quantos bytes de dado neste pacote (<=16)
-[6..6+len-1]  dado — fatia sequencial do buffer serializado de 124 bytes
-[6+len]  checksum
-```
-Vai chegar em `ceil(124/16) = 8` pacotes CHUNK (7 com 16 bytes + 1 com 12
-bytes). Concatene os `dado` de cada CHUNK, na ordem de `seq`, num buffer de
-124 bytes.
+Use `lengthFormatId=0x20` (1 byte segue) e declare `maxBlockLen=16` — é
+quanto dado (sem contar o cabeçalho SID+BSC) cabe em cada `TransferData`
+com folga no MTU padrão de BLE.
 
-**MAP_END** (7 bytes total):
+**4) TransferData — repetido até cobrir os 124 bytes**
 ```
-[3]   table_id   (deve bater com o do BEGIN — rejeite se não bater)
-[4-5] crc16      uint16 LE — CRC-16/CCITT-FALSE do buffer de 124 bytes
-                 reassemblado pelos CHUNK (ver algoritmo abaixo)
-[6]   checksum
+Painel → ECU:  [0x36] [BSC] [até 16 bytes de dado]
+ECU → Painel:  [0x76] [BSC]                (positiva, ecoa o BSC) OU
+               [0x7F] [0x36] [NRC]         (0x73 wrongBlockSequenceCounter, 0x24 requestSequenceError)
 ```
-**Recalcule o CRC16 do buffer que você reassemblou e compare com este
-campo. Se não bater, rejeite a tabela inteira (não aplique nada) e
-responda `ERR_CRC` (ver status abaixo).**
+`BSC` (blockSequenceCounter) é 1 byte, começa em `0x01`, incrementa a cada
+pacote (`ceil(124/16) = 8` pacotes: 7 de 16 bytes + 1 de 12). **Regra
+importante do padrão:** se o painel reenviar o MESMO BSC do pacote
+anterior (porque não recebeu a resposta a tempo), isso é válido — aceite
+de novo, não é erro. Só um BSC fora de sequência de verdade é erro.
 
-**MAP_ABORT** (4 bytes: marcador+versão+tipo+checksum) — painel cancelou
-uma transferência no meio. Descarte qualquer buffer parcial em andamento.
+**5) RequestTransferExit — fecha e valida**
+```
+Painel → ECU:  [0x37] [crc16_lo] [crc16_hi]
+ECU → Painel:  [0x77] [0x00]               (positiva: gravou com sucesso) OU
+               [0x7F] [0x37] [NRC]         (0x72 generalProgrammingFailure = CRC não bateu,
+                                             0x22 conditionsNotCorrect = motor ligou no meio)
+```
+O CRC16 vai no campo `transferRequestParameterRecord` (o padrão deixa
+esse campo livre pro fabricante — usamos pra validação de integridade,
+igual a como muitas ECUs reais fazem). **Recalcule o CRC do buffer que
+você reassemblou e compare. Se não bater, não grave nada e responda
+`0x72`.** Antes de gravar, **recheque o motor parado de novo** (pode ter
+ligado durante a transferência) — se estiver girando, responda `0x22` em
+vez de `0x72`.
+
+#### Códigos de erro (NRC) usados nesta troca
+
+| NRC | Valor | Quando responder |
+|---|---|---|
+| conditionsNotCorrect | `0x22` | motor girando (na sessão ou no TransferExit) |
+| requestSequenceError | `0x24` | serviço fora de ordem (ex.: TransferData sem RequestDownload antes) |
+| requestOutOfRange | `0x31` | endereço de tabela inválido, tamanho ≠ 124, célula fora da faixa mesmo após tentar clampar |
+| securityAccessDenied | `0x33` | tentou RequestDownload sem completar o SecurityAccess antes |
+| invalidKey | `0x35` | key enviada não bate com a calculada a partir do seed |
+| generalProgrammingFailure | `0x72` | CRC16 do TransferExit não bateu, ou falha ao gravar na flash |
+| wrongBlockSequenceCounter | `0x73` | BSC fora de ordem (não é repetição do anterior) |
+| subFunctionNotSupportedInActiveSession | `0x7E` | tentou RequestDownload/TransferData ainda na sessão default (esqueceu o passo 1) |
 
 #### Algoritmo do CRC16 (CRC-16/CCITT-FALSE, poly 0x1021, init 0xFFFF)
 
@@ -194,26 +262,16 @@ uint16_t crc16_ccitt_false(const uint8_t *data, size_t len)
 der, tem bug no port antes mesmo de mexer com BLE — pare e corrija aqui
 primeiro.
 
-#### Pacote ECU → Painel (characteristic de notify DEDICADA — separada da
-telemetria, não misture as duas):
-
-```
-Byte 0: 0xEB      marcador de status de mapa
-Byte 1: 0x01      versão
-Byte 2: status    ver tabela abaixo
-Byte 3: table_id  (0=injecao, 1=ignicao, 2=sonda)
-Byte 4: checksum = XOR dos bytes 0..3
-```
-
-| status | valor | quando mandar |
-|---|---|---|
-| ACK_BEGIN | 0x00 | recebeu MAP_BEGIN válido, pronto pros CHUNK |
-| ACK_CHUNK | 0x01 | (opcional) confirma cada CHUNK — só implemente se quiser fluxo mais robusto; não é obrigatório |
-| SAVED_OK | 0x02 | CRC bateu, validação passou, gravou na flash com sucesso |
-| ERR_CRC | 0x03 | CRC16 do MAP_END não bateu com o buffer reassemblado |
-| ERR_ENGINE_RUNNING | 0x04 | **recusa por segurança** — RPM simulado acima de zero no momento do MAP_END |
-| ERR_OUT_OF_RANGE | 0x05 | algum valor da tabela está fora da faixa válida (§3.2) mesmo depois de tentar clampar |
-| ERR_BUSY | 0x06 | já tem uma transferência em andamento (BEGIN chegou sem o anterior ter terminado) |
+**Fontes consultadas pra esta seção** (pesquisado nesta sessão, não é só
+memória do modelo):
+- [UDS protocol (ISO 14229) explained: a guide to the services — Diadrom Insights](https://diadrom.com/insights/uds-iso-14229-explained/)
+- [Request Download (0x34) Service: UDS Protocol — PiEmbSysTech](https://piembsystech.com/request-download-0x34-service-uds-protocol/)
+- [Negative Response Codes (NRC): UDS Protocol — PiEmbSysTech](https://piembsystech.com/negative-response-codes-nrc-uds-protocol/)
+- [UDS NRC Codes: Your Guide to Automotive Diagnostics — rfwireless-world](https://www.rfwireless-world.com/terminology/uds-nrc-codes)
+- [Security Access Service Identifier (0x27): UDS Protocol — PiEmbSysTech](https://piembsystech.com/security-access-service-identifier-0x27-uds-protocol/)
+- [UDS Security Access — Shayan Mukhtar](https://shayanmukhtar.com/2021/04/24/uds-security-access/)
+- [ASAM MCD-1 XCP — Wiki oficial ASAM](https://www.asam.net/standards/detail/mcd-1-xcp/wiki/)
+- [Understanding CCP and XCP: reading and tuning an ECU — Influx Technology](https://influxtechnology.com/blogs/learn/understanding-ccp-xcp)
 
 ## 3. Regra de segurança — não é opcional
 
@@ -226,9 +284,12 @@ segura é a ECU nunca aceitar escrita "ao vivo". Nesta bancada de teste,
 threshold pequeno (ex.: >50rpm simulado). Numa ECU real isso seria o sinal
 de rotação de verdade.
 
-Fluxo: ao receber MAP_END, ANTES de gravar na flash, cheque o RPM simulado
-atual. Se > 0 (ou acima do threshold), responda `ERR_ENGINE_RUNNING` e
-descarte o buffer — não grave nada.
+Dois pontos de checagem (defesa em profundidade, igual ao padrão UDS
+real): ao receber `DiagnosticSessionControl(programmingSession)` — recusa
+principal, antes de gastar tempo com segurança/transferência — e de novo
+no `RequestTransferExit`, caso o motor tenha ligado durante a
+transferência. Em qualquer um dos dois, responda `0x22
+conditionsNotCorrect` e não grave nada.
 
 ## 4. UUIDs BLE propostos
 
@@ -236,13 +297,16 @@ O protocolo do painel (ROADMAP.md §4 do repo `lvgl_porting`) nunca definiu
 UUIDs — ficou em aberto justamente esperando o firmware da ECU existir.
 Seguem UUIDs propostos por esta sessão (são só identificadores, livre pra
 gerar os seus com qualquer gerador de UUID v4 — só precisa manter os DOIS
-lados, painel e ECU, sincronizados se trocar):
+lados, painel e ECU, sincronizados se trocar). Note que agora só precisa
+de UM par escrita/notify pra TODOS os serviços UDS (sessão, segurança,
+download, transfer, exit) — é assim que o UDS real funciona também, um
+canal só multiplexado pelo SID no primeiro byte de cada PDU:
 
 ```
-Serviço ECU (custom):              7a2b1000-ec00-4a5d-9f6b-1234567890ab
-  Characteristic Telemetria (Notify):  7a2b1001-ec00-4a5d-9f6b-1234567890ab
-  Characteristic Mapa Escrita (Write): 7a2b1002-ec00-4a5d-9f6b-1234567890ab
-  Characteristic Mapa Status (Notify): 7a2b1003-ec00-4a5d-9f6b-1234567890ab
+Serviço ECU (custom):                 7a2b1000-ec00-4a5d-9f6b-1234567890ab
+  Characteristic Telemetria (Notify):    7a2b1001-ec00-4a5d-9f6b-1234567890ab
+  Characteristic UDS Request (Write):    7a2b1002-ec00-4a5d-9f6b-1234567890ab
+  Characteristic UDS Response (Notify):  7a2b1003-ec00-4a5d-9f6b-1234567890ab
 ```
 
 Anote esses UUIDs num lugar visível do seu projeto — quando o lado do
@@ -334,10 +398,15 @@ escreva o firmware inteiro de uma vez):
    crie um Serviço custom com o UUID de §4, e dentro dele 3
    Characteristics:
    - Telemetria: propriedade **Notify**, tamanho fixo 18 bytes.
-   - Mapa Escrita: propriedade **Write** (ou Write Without Response, mais
+   - UDS Request: propriedade **Write** (ou Write Without Response, mais
      rápido — mas aí você perde a confirmação de entrega no nível BLE;
-     comece com Write simples), tamanho máximo 23 bytes.
-   - Mapa Status: propriedade **Notify**, tamanho fixo 5 bytes.
+     comece com Write simples), tamanho máximo 18 bytes — recebe QUALQUER
+     PDU da sequência do §3.2 (sessão, seed/key, RequestDownload,
+     TransferData, RequestTransferExit), diferenciados pelo SID (primeiro
+     byte).
+   - UDS Response: propriedade **Notify**, tamanho máximo 3 bytes
+     (positiva mais curta) até o que a maior negativa precisar — sempre
+     começa com o SID+0x40 (positiva) ou `0x7F` (negativa).
    O CubeMX gera `custom_stm.h/.c` com enums e callbacks fracos
    (`Custom_STM_App_Notification` ou nome equivalente, o nome exato varia
    um pouco por versão do CubeMX/CubeWB — use o que ele gerar no SEU
@@ -352,15 +421,16 @@ escreva o firmware inteiro de uma vez):
 ## 7. Estrutura de código sugerida
 
 ```
-app_ecu_sim.c/.h     — leitura dos potenciômetros (mux), conversão pra
+app_ecu_sim.c/.h      — leitura dos potenciômetros (mux), conversão pra
                         unidade de engenharia, guarda o "snapshot" atual
-app_ecu_protocol.c/.h — monta o frame de telemetria (§3.1), monta/decodifica
-                        os pacotes de mapa (§3.2), calcula o CRC16
-app_map_storage.c/.h — grava/lê o mapa na flash interna (ver §8.4)
-app_debug_uart.c/.h  — imprime tudo em texto legível na UART
+app_ecu_protocol.c/.h — monta o frame de telemetria (§3.1); dispatch dos
+                        servicos UDS (§3.2: sessao/seguranca/download/
+                        transfer/exit), calcula CRC16 e a key seed->key
+app_map_storage.c/.h  — grava/lê o mapa na flash interna (ver §8.4)
+app_debug_uart.c/.h   — imprime tudo em texto legível na UART
 main.c                — laço principal: le sensores a cada Xms, manda
-                        telemetria, processa mapas recebidos (via callback
-                        do CubeMX), decide validação de segurança
+                        telemetria, processa PDUs UDS recebidos (via
+                        callback do CubeMX), decide validação de segurança
 ```
 
 ## 8. Código de referência
@@ -454,96 +524,191 @@ static void send_telemetry(void)
 }
 ```
 
-### 8.3 Recepção do mapa — máquina de estados BEGIN/CHUNK/END
+### 8.3 Recepção do mapa — dispatch de serviços UDS
 
 ```c
+typedef enum { UDS_SESSION_DEFAULT = 0x01, UDS_SESSION_PROGRAMMING = 0x02 } uds_session_t;
+
 typedef struct {
-    bool     in_progress;
+    uds_session_t session;
+    bool          security_unlocked;
+    uint16_t      last_seed;          // seed do ultimo requestSeed, pra conferir a key
+
+    bool     download_active;
     uint8_t  table_id;
     uint16_t total_len;
-    uint8_t  buf[124];      // APP_MAP_SERIALIZED_LEN
+    uint8_t  buf[124];       // APP_MAP_SERIALIZED_LEN
     uint16_t received_len;
-    uint16_t expected_seq;
-} map_rx_state_t;
+    uint8_t  expected_bsc;
+    uint8_t  last_bsc;       // permite aceitar repeticao do MESMO bsc (§3.2 passo 4)
+} uds_state_t;
 
-static map_rx_state_t s_rx = {0};
+static uds_state_t s_uds = { .session = UDS_SESSION_DEFAULT };
 
-static void send_map_status(uint8_t status, uint8_t table_id)
+static void send_negative(uint8_t sid, uint8_t nrc)
 {
-    uint8_t pkt[5];
-    pkt[0] = 0xEB; pkt[1] = 0x01; pkt[2] = status; pkt[3] = table_id;
-    pkt[4] = pkt[0] ^ pkt[1] ^ pkt[2] ^ pkt[3];
-    // Custom_STM_UpdateChar(CUSTOM_STM_MAPA_STATUS, pkt); // <- ajuste ao nome gerado
+    uint8_t pkt[3] = { 0x7F, sid, nrc };
+    // Custom_STM_UpdateChar(CUSTOM_STM_UDS_RESPONSE, pkt); // <- ajuste ao nome gerado
+    debug_print_uds_response(false, sid, nrc);
 }
 
 // Chame isto de dentro do callback que o CubeMX gerar quando a
-// characteristic de escrita de mapa (§4) receber dados.
-void on_map_write_received(const uint8_t *data, uint16_t len)
+// characteristic "UDS Request" (escrita, §4) receber dados. Cada PDU e
+// despachado pelo SID (primeiro byte) — exatamente como um servidor UDS
+// real multiplexa varios servicos num canal so.
+void on_uds_request_received(const uint8_t *data, uint16_t len)
 {
-    if (len < 4) return;  // pacote curto demais pra ter checksum valido
-    uint8_t chk = 0;
-    for (int i = 0; i < len - 1; i++) chk ^= data[i];
-    if (chk != data[len - 1]) return;  // checksum do PACOTE nao bateu — descarta silenciosamente
+    if (len < 1) return;
+    uint8_t sid = data[0];
 
-    uint8_t msg_type = data[2];
+    switch (sid) {
+    case 0x10: handle_session_control(data, len);        break;
+    case 0x27: handle_security_access(data, len);        break;
+    case 0x34: handle_request_download(data, len);       break;
+    case 0x36: handle_transfer_data(data, len);          break;
+    case 0x37: handle_request_transfer_exit(data, len);  break;
+    default:   send_negative(sid, 0x11); break;  // serviceNotSupported
+    }
+}
 
-    if (msg_type == 0x01) {  // MAP_BEGIN
-        if (data[4] != 8 || data[5] != 6) { send_map_status(0x05, data[3]); return; } // ERR_OUT_OF_RANGE
-        uint16_t total_len = (uint16_t)data[6] | ((uint16_t)data[7] << 8);
-        if (total_len != 124) { send_map_status(0x05, data[3]); return; }
+// 1) DiagnosticSessionControl — unico servico que roda mesmo fora da
+// sessao de programacao (obvio: e ele quem entra nela).
+static void handle_session_control(const uint8_t *data, uint16_t len)
+{
+    if (len < 2) { send_negative(0x10, 0x13); return; }  // incorrectMessageLengthOrInvalidFormat
 
-        s_rx.in_progress   = true;
-        s_rx.table_id      = data[3];
-        s_rx.total_len     = total_len;
-        s_rx.received_len  = 0;
-        s_rx.expected_seq  = 0;
-        send_map_status(0x00, data[3]);  // ACK_BEGIN
-
-    } else if (msg_type == 0x02) {  // MAP_CHUNK
-        if (!s_rx.in_progress) { send_map_status(0x06, data[3]); return; } // ERR_BUSY (nao tinha BEGIN)
-        uint16_t seq = (uint16_t)data[3] | ((uint16_t)data[4] << 8);
-        uint8_t  chunk_len = data[5];
-        if (seq != s_rx.expected_seq || s_rx.received_len + chunk_len > sizeof(s_rx.buf)) {
-            s_rx.in_progress = false;  // sequencia quebrada — aborta
-            return;
-        }
-        memcpy(&s_rx.buf[s_rx.received_len], &data[6], chunk_len);
-        s_rx.received_len += chunk_len;
-        s_rx.expected_seq++;
-
-    } else if (msg_type == 0x03) {  // MAP_END
-        if (!s_rx.in_progress || data[3] != s_rx.table_id || s_rx.received_len != s_rx.total_len) {
-            send_map_status(0x03, data[3]); // ERR_CRC (dado incompleto/inconsistente)
-            s_rx.in_progress = false;
-            return;
-        }
-        uint16_t crc_recv = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
-        uint16_t crc_calc = crc16_ccitt_false(s_rx.buf, s_rx.received_len);
-        s_rx.in_progress = false;
-
-        if (crc_recv != crc_calc) { send_map_status(0x03, data[3]); return; } // ERR_CRC
-
+    uint8_t requested = data[1];
+    if (requested == UDS_SESSION_PROGRAMMING) {
         ecu_sim_data_t cur;
         read_all_sensors(&cur);
         if (engine_is_running(&cur)) {
-            send_map_status(0x04, data[3]);  // ERR_ENGINE_RUNNING — nao grava nada
+            send_negative(0x10, 0x22);  // conditionsNotCorrect — PRINCIPAL PONTO DE RECUSA (ver §3)
             return;
         }
-
-        if (!validate_and_clamp_table(s_rx.buf, data[3])) {
-            send_map_status(0x05, data[3]);  // ERR_OUT_OF_RANGE
-            return;
-        }
-
-        if (map_storage_save(data[3], s_rx.buf, s_rx.received_len)) {
-            send_map_status(0x02, data[3]);  // SAVED_OK
-        } else {
-            send_map_status(0x06, data[3]);  // ERR_BUSY (falha de flash — reaproveitado)
-        }
-
-    } else if (msg_type == 0x04) {  // MAP_ABORT
-        s_rx.in_progress = false;
     }
+
+    s_uds.session           = (uds_session_t)requested;
+    s_uds.security_unlocked = false;  // trocar de sessao sempre reseta seguranca
+    s_uds.download_active   = false;
+
+    uint8_t pkt[3] = { 0x50, requested, 0x00 };  // sessionParameterRecord simplificado
+    // Custom_STM_UpdateChar(CUSTOM_STM_UDS_RESPONSE, pkt); // <- ajuste ao nome gerado
+    debug_print_uds_response(true, 0x10, 0);
+}
+
+// 2) SecurityAccess — seed/key nivel 1. So funciona dentro da sessao de programacao.
+static void handle_security_access(const uint8_t *data, uint16_t len)
+{
+    if (s_uds.session != UDS_SESSION_PROGRAMMING) { send_negative(0x27, 0x7E); return; }
+    if (len < 2) { send_negative(0x27, 0x13); return; }
+
+    uint8_t sub = data[1];
+    if (sub == 0x01) {  // requestSeed
+        s_uds.last_seed = (uint16_t)(HAL_GetTick() & 0xFFFF);
+        if (s_uds.last_seed == 0) s_uds.last_seed = 1;  // evita seed=0 (key trivial)
+
+        uint8_t pkt[4] = { 0x67, 0x01, (uint8_t)(s_uds.last_seed & 0xFF), (uint8_t)(s_uds.last_seed >> 8) };
+        // Custom_STM_UpdateChar(CUSTOM_STM_UDS_RESPONSE, pkt); // <- ajuste ao nome gerado
+        debug_print_uds_response(true, 0x27, 0);
+
+    } else if (sub == 0x02) {  // sendKey
+        if (len < 4) { send_negative(0x27, 0x13); return; }
+        uint16_t key_recv = (uint16_t)data[2] | ((uint16_t)data[3] << 8);
+        uint16_t key_exp  = compute_key(s_uds.last_seed);  // ver algoritmo em §3.2
+        if (key_recv != key_exp) { send_negative(0x27, 0x35); return; }  // invalidKey
+
+        s_uds.security_unlocked = true;
+        uint8_t pkt[2] = { 0x67, 0x02 };
+        debug_print_uds_response(true, 0x27, 0);
+
+    } else {
+        send_negative(0x27, 0x12);  // subFunctionNotSupported
+    }
+}
+
+// 3) RequestDownload — declara qual tabela e o tamanho. Exige sessao de
+// programacao E seguranca liberada.
+static void handle_request_download(const uint8_t *data, uint16_t len)
+{
+    if (s_uds.session != UDS_SESSION_PROGRAMMING) { send_negative(0x34, 0x7E); return; }
+    if (!s_uds.security_unlocked)                  { send_negative(0x34, 0x33); return; }
+    if (len < 7)                                   { send_negative(0x34, 0x13); return; }
+
+    uint16_t addr = (uint16_t)data[3] | ((uint16_t)data[4] << 8);
+    uint16_t size = (uint16_t)data[5] | ((uint16_t)data[6] << 8);
+    if (addr > 0x0002 || size != 124) { send_negative(0x34, 0x31); return; }  // requestOutOfRange
+
+    s_uds.download_active = true;
+    s_uds.table_id        = (uint8_t)addr;
+    s_uds.total_len       = size;
+    s_uds.received_len    = 0;
+    s_uds.expected_bsc    = 0x01;
+    s_uds.last_bsc        = 0x00;
+
+    uint8_t pkt[3] = { 0x74, 0x20, 16 };  // lengthFormatId=1 byte segue, maxBlockLen=16
+    debug_print_uds_response(true, 0x34, 0);
+}
+
+// 4) TransferData — repetido ate cobrir os 124 bytes.
+static void handle_transfer_data(const uint8_t *data, uint16_t len)
+{
+    if (!s_uds.download_active) { send_negative(0x36, 0x24); return; }  // requestSequenceError
+    if (len < 2)                 { send_negative(0x36, 0x13); return; }
+
+    uint8_t bsc = data[1];
+    if (bsc == s_uds.last_bsc) {
+        // Repeticao valida do bsc anterior (o painel nao recebeu a
+        // resposta a tempo) — so reenvia o ACK, nao reprocessa o dado.
+        uint8_t pkt[2] = { 0x76, bsc };
+        debug_print_uds_response(true, 0x36, 0);
+        return;
+    }
+    if (bsc != s_uds.expected_bsc) { send_negative(0x36, 0x73); return; }  // wrongBlockSequenceCounter
+
+    uint16_t chunk_len = len - 2;
+    if (s_uds.received_len + chunk_len > sizeof(s_uds.buf)) { send_negative(0x36, 0x31); return; }
+
+    memcpy(&s_uds.buf[s_uds.received_len], &data[2], chunk_len);
+    s_uds.received_len += chunk_len;
+    s_uds.last_bsc      = bsc;
+    s_uds.expected_bsc++;  // uint8_t: da a volta sozinho 0xFF -> 0x00
+
+    uint8_t pkt[2] = { 0x76, bsc };
+    debug_print_uds_response(true, 0x36, 0);
+}
+
+// 5) RequestTransferExit — fecha, valida CRC, recheca motor parado (pode
+// ter ligado durante a transferencia) e so entao grava na flash.
+static void handle_request_transfer_exit(const uint8_t *data, uint16_t len)
+{
+    if (!s_uds.download_active || s_uds.received_len != s_uds.total_len) {
+        send_negative(0x37, 0x24);  // requestSequenceError — download incompleto
+        return;
+    }
+    if (len < 3) { send_negative(0x37, 0x13); return; }
+
+    uint16_t crc_recv = (uint16_t)data[1] | ((uint16_t)data[2] << 8);
+    uint16_t crc_calc = crc16_ccitt_false(s_uds.buf, s_uds.received_len);
+    s_uds.download_active = false;  // a transferencia acaba aqui de qualquer jeito
+
+    if (crc_recv != crc_calc) { send_negative(0x37, 0x72); return; }  // generalProgrammingFailure
+
+    ecu_sim_data_t cur;
+    read_all_sensors(&cur);
+    if (engine_is_running(&cur)) { send_negative(0x37, 0x22); return; }  // conditionsNotCorrect (2a checagem)
+
+    if (!validate_and_clamp_table(s_uds.buf, s_uds.table_id)) {
+        send_negative(0x37, 0x31);  // requestOutOfRange
+        return;
+    }
+
+    if (!map_storage_save(s_uds.table_id, s_uds.buf, s_uds.received_len)) {
+        send_negative(0x37, 0x72);  // generalProgrammingFailure (falha de flash)
+        return;
+    }
+
+    uint8_t pkt[2] = { 0x77, 0x00 };
+    debug_print_uds_response(true, 0x37, 0);
 }
 
 // Confere/clampa cada celula contra as faixas do §3.2 (offsets 28..123 do
@@ -647,19 +812,38 @@ static void debug_print_telemetry(const ecu_sim_data_t *d)
     HAL_UART_Transmit(&huart1, (uint8_t *)line, n, 100);
 }
 
-static void debug_print_map_status(uint8_t status, uint8_t table_id)
+// Nomes so dos NRCs que esta ECU efetivamente usa (ver tabela do §3.2) —
+// nao e a lista inteira do padrao ISO 14229-1.
+static const char *nrc_name(uint8_t nrc)
 {
-    static const char *names[] = {"ACK_BEGIN","ACK_CHUNK","SAVED_OK",
-                                   "ERR_CRC","ERR_ENGINE_RUNNING","ERR_OUT_OF_RANGE","ERR_BUSY"};
-    char line[80];
-    int n = snprintf(line, sizeof(line), "[MAP] table=%u status=%s\r\n",
-                      table_id, (status < 7) ? names[status] : "?");
+    switch (nrc) {
+    case 0x13: return "incorrectMessageLengthOrInvalidFormat";
+    case 0x22: return "conditionsNotCorrect";
+    case 0x24: return "requestSequenceError";
+    case 0x31: return "requestOutOfRange";
+    case 0x33: return "securityAccessDenied";
+    case 0x35: return "invalidKey";
+    case 0x72: return "generalProgrammingFailure";
+    case 0x73: return "wrongBlockSequenceCounter";
+    case 0x7E: return "subFunctionNotSupportedInActiveSession";
+    default:   return "?";
+    }
+}
+
+static void debug_print_uds_response(bool positive, uint8_t sid, uint8_t nrc)
+{
+    char line[96];
+    int n = positive
+        ? snprintf(line, sizeof(line), "[UDS] SID=0x%02X -> positiva (0x%02X)\r\n",
+                   sid, (uint8_t)(sid + 0x40))
+        : snprintf(line, sizeof(line), "[UDS] SID=0x%02X -> NEGATIVA NRC=0x%02X (%s)\r\n",
+                   sid, nrc, nrc_name(nrc));
     HAL_UART_Transmit(&huart1, (uint8_t *)line, n, 100);
 }
 ```
-Chame `debug_print_map_status` de dentro de `send_map_status` (ou logo
-antes/depois de cada chamada dela) pra ver no terminal serial exatamente
-o que a ECU decidiu e por quê.
+`debug_print_uds_response` já é chamada de dentro de cada `handle_*` do
+§8.3 (via `send_negative` na via negativa, direto nos outros) — não
+precisa espalhar chamada manual, só usar os handlers como estão.
 
 ## 9. Passo a passo de teste/validação
 
@@ -673,17 +857,30 @@ o que a ECU decidiu e por quê.
 3. **Teste BLE com um app genérico primeiro** (nRF Connect, LightBlue,
    etc., no celular) antes de tentar conectar com o painel de verdade —
    confirme que o serviço/characteristics aparecem com os UUIDs certos
-   (§4), que a Telemetria notifica 18 bytes periodicamente, e que dá pra
-   escrever manualmente um pacote MAP_BEGIN de teste na characteristic de
-   escrita e ver a resposta de status aparecer na de notify.
+   (§4) e que a Telemetria notifica 18 bytes periodicamente. Depois teste a
+   sequência UDS manualmente, escrevendo cada PDU na characteristic "UDS
+   Request" e conferindo a resposta na "UDS Response":
+   a. `10 02` (session control) → espere `50 02 00` (positiva).
+   b. `27 01` (request seed) → anote o seed de 2 bytes que voltar.
+   c. Calcule a key com o algoritmo do §3.2 e escreva `27 02 <key_lo> <key_hi>`
+      → espere `67 02` (positiva).
+   d. `34 00 22 00 00 7C 00` (RequestDownload da tabela 0=injeção, size=124=0x7C)
+      → espere `74 20 10` (aceita, maxBlockLen=16).
+   e. Só pra confirmar que a máquina de estados aceita dado, escreva UM
+      `TransferData` de teste (`36 01` + 16 bytes quaisquer) → espere
+      `76 01`. Não precisa completar os 124 bytes só pra este teste manual.
 4. **Teste a trava de segurança**: com o potenciômetro de RPM girado
-   (>0), tente mandar um mapa — confirme que a ECU responde
-   `ERR_ENGINE_RUNNING` e **não** grava (releia da flash depois pra
-   confirmar que o valor antigo continua lá).
-5. **Só depois disso**, conecte de verdade com o painel — o lado do
+   (>0), repita o passo 3a (`10 02`) — confirme que a ECU responde negativo
+   `7F 10 22` (conditionsNotCorrect) e nem chega a entrar em sessão de
+   programação. Com o RPM voltando a zero, o mesmo comando deve aceitar.
+5. **Teste a segurança errada de propósito**: mande uma key errada no
+   passo 3c — confirme `7F 27 35` (invalidKey) e que um `RequestDownload`
+   posterior é recusado com `7F 34 33` (securityAccessDenied) por não ter
+   passado pela segurança de verdade.
+6. **Só depois disso**, conecte de verdade com o painel — o lado do
    painel ainda precisa do GATT client implementado (não existe ainda,
-   ver §10) pra consumir isso automaticamente; até lá, os passos 1-4 acima
-   já validam a ECU sozinha.
+   ver §10) pra rodar essa sequência automaticamente; até lá, os passos
+   1-5 acima já validam a ECU sozinha.
 
 ## 10. O que falta do lado do painel (fora do escopo deste guia)
 
@@ -694,11 +891,16 @@ telemetria e mandar mapas de verdade, falta implementar (no repo
 - `ble_gattc_disc_all_chrs` → descobrir as characteristics.
 - `ble_gattc_subscribe` na characteristic de Telemetria → encaminhar bytes
   recebidos pra `app_ecu_feed_ble_notify()` (já existe e já funciona).
-- `ble_gattc_subscribe` na characteristic de Status de Mapa → encaminhar
-  pra um novo `app_map_feed_status_notify()` (ainda não existe).
-- `ble_gattc_write` pra characteristic de Mapa Escrita → é o que
-  `app_map_send_to_ecu()` vai chamar de verdade (hoje é um stub, retorna
-  `ESP_ERR_NOT_SUPPORTED`).
+- `ble_gattc_subscribe` na characteristic "UDS Response" → encaminhar cada
+  PDU pra `app_map_parse_response()` (já existe e já testado do lado do
+  painel) e dar sequência à próxima etapa (sessão → segurança → download →
+  transfer → exit) conforme a resposta.
+- `ble_gattc_write` pra characteristic "UDS Request" → é o que
+  `app_map_send_to_ecu()` vai chamar de verdade pra cada PDU da sequência
+  (montados por `app_map_build_session_control`/`_security_seed_request`/
+  `_security_send_key`/`_request_download`/`_transfer_data_pdus`/
+  `_transfer_exit`, todos já implementados e testados). Hoje
+  `app_map_send_to_ecu()` é um stub, retorna `ESP_ERR_NOT_SUPPORTED`.
 
 Isso é trabalho separado, do lado ESP32 — depois que a ECU (este guia)
 estiver funcionando e você confirmar os UUIDs/comportamento reais com um
@@ -707,16 +909,27 @@ app de BLE genérico, essa é a próxima peça a pedir.
 ## 11. Limitações conhecidas deste simulador
 
 - Não lê motor real nenhum — é só potenciômetro simulando valor.
-- Sem autenticação/pareamento BLE (par de segurança) — qualquer
-  dispositivo próximo pode se conectar. Aceitável pra bancada de teste;
-  **não é adequado pra um produto final** sem revisar isso (bonding/pairing
-  do NimBLE/STM32WB, fora do escopo aqui).
+- **O `SecurityAccess` (§3.2) não é criptografia real** — é uma
+  transformação simples (rotação de bits + XOR) só pra impedir escrita
+  acidental de um app BLE genérico, não pra resistir a alguém que capturou
+  o tráfego (o algoritmo está documentado em texto claro neste próprio
+  guia). Pra um produto real, troque por um desafio-resposta mais forte
+  (ex.: HMAC com uma chave que não viaje em texto claro em documentação
+  nenhuma) e some isso ao pareamento BLE (bonding) — hoje não tem nenhum
+  dos dois além do gate seed/key.
+- Sem autenticação/pareamento BLE (bonding/pairing) — qualquer dispositivo
+  próximo pode se conectar (a única barreira pra ESCREVER um mapa é o
+  SecurityAccess acima; LER a telemetria continua livre pra qualquer
+  central). Aceitável pra bancada de teste; **não é adequado pra um
+  produto final** sem revisar isso (bonding/pairing do NimBLE/STM32WB,
+  fora do escopo aqui).
 - `validate_and_clamp_table` (§8.3) clampa em vez de rejeitar por padrão —
   troque pra rejeitar (`return false`) se preferir uma política mais
   estrita (a diferença é: clampar aceita o mapa mas força os valores pra
-  dentro da faixa seguro; rejeitar devolve `ERR_OUT_OF_RANGE` e não muda
+  dentro da faixa seguro; rejeitar devolve `requestOutOfRange` e não muda
   nada). Isso é uma escolha de produto, não uma resposta técnica única.
-- O `ACK_CHUNK` do protocolo é opcional — sem ele, uma transferência que
-  perder um pacote no meio só vai ser detectada no MAP_END (CRC não bate).
-  Pra bancada de teste isso é aceitável; pra um produto final, considere
-  implementar confirmação por chunk.
+- O padrão UDS real reconhece **repetição do mesmo `blockSequenceCounter`**
+  como reenvio válido (§3.2, passo 4) — mas não tem um mecanismo de
+  retransmissão automática embutido além disso; se o painel perder uma
+  resposta e não reenviar por conta própria, a transferência trava até dar
+  timeout do lado dele. Pra bancada de teste isso é aceitável.

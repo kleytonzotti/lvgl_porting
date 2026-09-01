@@ -408,21 +408,55 @@ Speeduino/MegaSquirt/rusEFI já citados no §7:
   `lambda`/`lambda_x1000` do `app_ecu` (§4), que é a leitura AO VIVO da
   sonda — este mapa é o alvo que a ECU persegue, não uma leitura.
 
-O painel passa a poder **escrever** um mapa novo na ECU (protocolo
-completo, com framing BEGIN/CHUNK/END + CRC16, documentado em
-[`components/app_map/include/app_map.h`](components/app_map/include/app_map.h) —
-`table_id` 0=injeção, 1=ignição, 2=sonda, uma transferência por tabela).
-Telemetria (§4) e OBD2 (§6) continuam **só leitura**, sem mudança nenhuma
-— a exceção é só para este dado de calibração.
+O painel passa a poder **escrever** um mapa novo na ECU. O protocolo (2ª
+versão, 2026-09-01) não é mais um framing inventado do zero — é baseado no
+**UDS (ISO 14229-1)**, o protocolo automotivo real pra exatamente isto
+(escrever um bloco de calibração na memória não-volátil de uma ECU), com
+Service IDs, subfunções e códigos de erro (NRC) reais do padrão,
+pesquisados e documentados byte a byte em
+[`components/app_map/include/app_map.h`](components/app_map/include/app_map.h).
+Sequência: `DiagnosticSessionControl(programmingSession)` →
+`SecurityAccess` (seed/key) → `RequestDownload` → `TransferData` (repetido)
+→ `RequestTransferExit`. **Por que UDS e não XCP** (o outro padrão
+automotivo candidato, ASAM MCD-1 XCP): XCP é pra tunagem AO VIVO com motor
+rodando; este projeto decidiu o oposto (só grava com motor parado, ver
+abaixo) — isso é exatamente o caso de uso do fluxo
+RequestDownload/TransferData/RequestTransferExit do UDS (reflash de
+calibração em modo de serviço). A escolha de protocolo seguiu a decisão de
+segurança já tomada, não o contrário. Telemetria (§4) e OBD2 (§6)
+continuam **só leitura**, sem mudança nenhuma — a exceção é só para este
+dado de calibração.
 
 **Como a segurança foi resolvida (decisão do usuário, não my default):**
 a ECU (firmware STM32, fora deste repo) é quem tem a palavra final — ela
 DEVE validar/clampar os valores recebidos contra limites físicos e
 **recusar gravar um mapa novo com o motor girando** (RPM > 0), só aceita
-com o motor parado. O protocolo já reserva o status
-`APP_MAP_STATUS_ERR_ENGINE_RUNNING` pra ECU comunicar essa recusa de volta
-ao painel. Essa validação mora inteiramente no firmware da ECU — não tem
-como o painel garantir isso remotamente, só pode confiar na resposta.
+com o motor parado. No protocolo UDS isso é o NRC padrão `0x22
+conditionsNotCorrect`, respondido já na entrada da sessão de programação
+(ponto principal de recusa) e de novo no `RequestTransferExit` (caso o
+motor tenha ligado no meio da transferência). Além disso agora existe uma
+camada de `SecurityAccess` (seed/key) antes de aceitar qualquer escrita —
+⚠️ o algoritmo seed→key implementado é uma transformação simples DE
+DEMONSTRAÇÃO (rotação de bits + XOR), não criptografia real; o objetivo é
+recusar escrita de um app BLE genérico por acidente, não resistir a um
+atacante que capturou o tráfego (ver aviso grande em `app_map.h`). Essa
+validação toda mora inteiramente no firmware da ECU — não tem como o
+painel garantir isso remotamente, só pode confiar na resposta.
+
+**A ECU é a fonte de verdade, não o painel (decisão de 2026-09-01):** até
+aqui a tela só lia o cache local (NVS) ao abrir — o painel podia mostrar
+um mapa desatualizado sem avisar. Corrigido: `ui_screen_map_show()` agora
+tenta **ler o mapa atual da ECU primeiro** (`app_map_read_from_ecu()`, via
+`RequestUpload` 0x35 — o par de leitura do `RequestDownload`, mesmo
+formato, sem exigir sessão de programação nem `SecurityAccess` porque ler
+é mais leve que escrever) antes de deixar editar qualquer coisa. Só cai
+pro cache local em NVS se a ECU não responder (hoje sempre, mesma
+pendência do GATT client), e a barra de status da tela avisa claramente
+qual dos dois está mostrando — nunca finge que o cache local é dado
+confirmado. Diferença de framing do UDS real entre download e upload: no
+upload quem carrega o dado é a **resposta** do `TransferData`
+(`[0x76][BSC][dado]`), não o pedido (`[0x36][BSC]`, vazio) — documentado
+em `app_map.h`.
 
 **Estado atual (lado painel, este repo):**
 - Editor completo na tela "Mapas" (`ui_screen_map.c`) — grade heatmap
@@ -440,22 +474,55 @@ como o painel garantir isso remotamente, só pode confiar na resposta.
   primeira correção só adiava o estouro — trocar de aba ia SOMANDO grades
   (nunca destruía a antiga), então visitar as 3 abas reproduzia o mesmo
   estouro; corrigido destruindo a grade da aba anterior a cada troca.
-- Cache local em NVS (`app_map_save_local`/`app_map_get`) — sobrevive a
-  reabrir a tela, mas não é a cópia que manda de verdade (essa é a da
-  flash da ECU).
-- Protocolo de transferência (framing chunk + CRC16) implementado e
-  testado via Unity (`test_app/main/test_app_map.c`) — cobre
-  serialização, checksum por pacote e CRC16 contra vetor de teste padrão.
-- `app_map_send_to_ecu()` é um stub honesto: monta os pacotes de verdade
-  (testável) mas retorna `ESP_ERR_NOT_SUPPORTED` porque falta o GATT
-  client de escrita em `app_ble.c` — mesma pendência que o subscribe de
-  telemetria do §4 já tinha antes de existir a ECU de verdade.
+- Curva padrão (`app_map_reset_default`) garantidamente **sem quebra**
+  dentro da grade real — as fórmulas são lineares e as constantes foram
+  escolhidas pra nunca saturar o clamp MIN/MAX (o que criaria um "kink" de
+  inclinação); teste automatizado em `test_app_map.c` trava se um ajuste
+  futuro nas constantes voltar a saturar.
+- Cache local em NVS (`app_map_save_local`/`app_map_get`) — só entra como
+  QUEDA quando a ECU não responde (ver acima); nunca é a cópia que manda
+  de verdade (essa é a da flash da ECU).
+- Protocolo UDS (montagem de cada PDU: sessão, seed/key, RequestDownload,
+  TransferData, RequestTransferExit, e a decodificação de resposta
+  positiva/negativa) implementado e testado via Unity
+  (`test_app/main/test_app_map.c`) — cobre cada PDU byte a byte, o
+  encadeamento blockSequenceCounter, reassemblagem contra
+  `app_map_serialize_table` e o CRC16 contra vetor de teste padrão.
+- `app_map_send_to_ecu()` (escrita) e `app_map_read_from_ecu()` (leitura,
+  novo) são stubs honestos: cada PDU das duas sequências já pode ser
+  montado e decodificado de verdade (testável) mas as funções retornam
+  `ESP_ERR_NOT_SUPPORTED` porque falta o GATT client em `app_ble.c` —
+  mesma pendência que o subscribe de telemetria do §4 já tinha antes de
+  existir a ECU de verdade.
 
 **Falta (lado ECU, fora deste repo):** o firmware STM32WB5MM-DK precisa
-implementar o GATT **server** com uma characteristic de escrita pro
-protocolo do `app_map.h`, decodificar BEGIN/CHUNK/END, validar CRC16,
-aplicar a trava de "motor parado", gravar na flash interna, e reler
-sozinho no boot. Guia passo a passo (STM32CubeIDE, protocolo byte a byte,
-pinos/hardware do simulador por potenciômetro, código de referência) em
-[`STM32_ECU_SIMULADOR_BLE.md`](STM32_ECU_SIMULADOR_BLE.md) — escrito pra
-ser colado numa sessão de IA separada, trabalhando no projeto STM32.
+implementar o GATT **server** com characteristics de leitura E escrita pro
+protocolo UDS de `app_map.h`, decodificar cada serviço
+(0x10/0x27/0x34/0x35/0x36/0x37), validar o CRC16 e a faixa de cada célula,
+aplicar a trava de "motor parado" (só na escrita — leitura não é gated),
+gravar na flash interna, e reler sozinho no boot. ⚠️
+[`STM32_ECU_SIMULADOR_BLE.md`](STM32_ECU_SIMULADOR_BLE.md) (guia passo a
+passo — STM32CubeIDE, protocolo byte a byte, pinos/hardware do simulador
+por potenciômetro, código de referência, escrito pra ser colado numa
+sessão de IA separada trabalhando no projeto STM32) ainda documenta só o
+`RequestDownload` (escrita) — o `RequestUpload` (leitura, 0x35) é novo
+desta sessão e o guia ainda não foi atualizado com ele; avisar
+explicitamente antes de colar numa sessão de firmware, ou pedir pra
+regenerar o guia primeiro.
+
+**Ferramenta de debug TEMPORÁRIA — `components/app_map_debug_ble/`
+(2026-09-01):** pedida explicitamente pra dar pra inspecionar via nRF
+Connect (app de celular) os bytes que a tela "Mapas" mandaria, sem
+precisar esperar o firmware da ECU existir. Liga o papel de PERIFÉRICO
+BLE no próprio painel (hoje ele só faz papel de central/scanner) —
+anuncia como **"ZOTTI-ECU"** (é esse o nome pra filtrar no nRF Connect;
+mesmo nome já configurado em `app_ble.c`), com um serviço GATT usando os
+mesmos UUIDs do guia STM32. Um "sniffer" registrado em `app_map.c`
+(`app_map_set_debug_sniffer`) notifica cada PDU que `app_map_send_to_ecu()`
+montaria, na ordem, toda vez que "Salvar Mapa" é clicado com um celular
+conectado e inscrito na characteristic — custo zero quando ninguém está
+conectado. Ver o comentário grande em
+[`components/app_map_debug_ble/include/app_map_debug_ble.h`](components/app_map_debug_ble/include/app_map_debug_ble.h)
+pro passo a passo de uso E de remoção (é só apagar a pasta + 2 chamadas
+marcadas "DEBUG TEMPORARIO" em `app_ble.c` + 1 linha do `CMakeLists.txt`
+dele — não é destinado a virar parte do produto final).
