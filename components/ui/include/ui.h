@@ -28,7 +28,7 @@ void ui_screen_dashboard_show(void);
 lv_color_t  ui_dash_accent_color(uint8_t idx);
 const char *ui_dash_accent_name(uint8_t idx);
 
-void ui_screen_scanner_show(void);
+void ui_screen_bcu_trip_show(void);
 void ui_screen_ecu_show(void);
 void ui_screen_can_show(void);
 void ui_screen_bcu_monitor_show(void);

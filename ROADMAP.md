@@ -46,6 +46,7 @@ não um acidente de arquitetura.
 | `ui_screen_dashboard.c` | Dashboard | 4 modelos de tela (Classic/Race/Grid/Duplo), config única persistida em NVS (editada em Configurações), efeito de "perto do corte", modo Demo, cor do acento do RPM (Grid) — ver §10 |
 | `ui_screen_pedal.c` **(novo)** | Tela "MODULO DE PEDAL" — seleção de modo Economia/Normal/Sport | Usa `app_pedal_link_set_mode`/`get_status`; mostra "DESCONECTADO" corretamente enquanto §5 não for resolvido (init continua desligado de propósito) |
 | `ui_screen_can.c` (aba Decoder) | OBD2 ativo sobre o CAN do Vectra (SAE J1979 Mode 01) | Botão liga/desliga `app_bcu_obd2_set_active`; só **exibe** o snapshot — quem pede/decodifica é o `app_bcu` (§6) |
+| `ui_screen_bcu_trip.c` **(novo)** | Tela "COMPUTADOR DE BORDO" (menu, antigo "Scanner") — velocidade em destaque + distância/vel. média/vel. máxima/tempo de viagem, botão Zerar, indicador de Cruise Control | Fonte CAN (OBD2, padrão) ou Demo — sem opção ECU BLE porque `app_ecu` não carrega velocidade; distância integrada localmente (velocidade × dt) na própria tela, não persiste em NVS/SD; Cruise Control é só um indicador visual local, **nunca** um comando — ver regra de ouro do §1 |
 | `test_app/` **(novo)** | App de teste Unity separado (`idf.py -C test_app build flash monitor`) | Cobre app_ecu, app_pedal_link (parser), app_sim |
 
 ### Código morto removido
@@ -335,9 +336,13 @@ display — ver skill `verify`/`run` pra isso).
 ## 12. Não coberto nesta rodada (ainda pendente, não esquecido)
 
 - Telas com stub/gap conhecidos e não tocados: `app_inputs.c`/`app_outputs.c`
-  (placeholders), scanner ELM327 via BLE em `ui_screen_scanner.c` (protocolo
-  não definido — diferente do OBD2 direto sobre CAN do §6, que já foi
-  implementado), TODOs em `ui_screen_config.c`.
+  (placeholders), TODOs em `ui_screen_config.c`.
+- Scanner ELM327 via BLE (protocolo não definido — diferente do OBD2 direto
+  sobre CAN do §6, que já foi implementado): a tela placeholder que existia
+  pra isso (`ui_screen_scanner.c`, menu "Scanner") foi **substituída** pela
+  tela "Computador de Bordo" (`ui_screen_bcu_trip.c`, ver §2) — não há mais
+  nenhum placeholder reservado pro scanner ELM327. Se essa ideia voltar,
+  precisa de uma tela nova do zero.
 - Aba "Gateway" da tela CAN (`ui_screen_can.c`) continua placeholder —
   fora do escopo do §6, roadmap não detalha o que ela deveria fazer.
 - `app_dash_profile` ainda suporta múltiplos perfis por índice na API
@@ -362,5 +367,6 @@ display — ver skill `verify`/`run` pra isso).
 5. Projetar o hardware do módulo de pedal (schematic + PCB) com os chips
    automotivos de referência (§7) — H-bridge DRV8873-Q1 primeiro, por ser
    reaproveitável.
-6. Opcional: scanner ELM327 via BLE (§12) — precisa definir o protocolo do
-   zero antes, diferente do OBD2 direto sobre CAN que já foi implementado.
+6. Opcional: scanner ELM327 via BLE (§12) — precisa definir o protocolo e
+   desenhar uma tela nova do zero (a antiga foi substituída pelo Computador
+   de Bordo), diferente do OBD2 direto sobre CAN que já foi implementado.

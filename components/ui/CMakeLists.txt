@@ -8,7 +8,7 @@ idf_component_register(
 
         # Telas principais
         "src/ui_screen_dashboard.c"
-        "src/ui_screen_scanner.c"
+        "src/ui_screen_bcu_trip.c"
         "src/ui_screen_ecu.c"
         "src/ui_screen_can.c"
         "src/ui_screen_bcu_monitor.c"

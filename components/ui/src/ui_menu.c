@@ -24,7 +24,7 @@ void ui_screen_load(lv_obj_t *scr)
 
 // Callbacks de navegacao.
 static void cb_dashboard(lv_event_t *e)  { LV_UNUSED(e); ui_nav(ui_screen_dashboard_show); }
-static void cb_scanner(lv_event_t *e)    { LV_UNUSED(e); ui_nav(ui_screen_scanner_show); }
+static void cb_bcu_trip(lv_event_t *e)   { LV_UNUSED(e); ui_nav(ui_screen_bcu_trip_show); }
 static void cb_ecu(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_ecu_show); }
 static void cb_can(lv_event_t *e)        { LV_UNUSED(e); ui_nav(ui_screen_can_show); }
 static void cb_datalogger(lv_event_t *e) { LV_UNUSED(e); ui_nav(ui_screen_datalogger_show); }
@@ -67,12 +67,16 @@ static void create_menu_btn(lv_obj_t *parent, const char *icon,
     lv_obj_set_style_text_color(lbl_icon, ZOTTI_ACCENT, 0);
     lv_obj_align(lbl_icon, LV_ALIGN_CENTER, 0, -18);
 
-    // Label
+    // Label — largura fixa com quebra de linha (alguns nomes, como
+    // "Computador de Bordo", nao cabem numa linha so no card de 170px).
     lv_obj_t *lbl_text = lv_label_create(btn);
+    lv_obj_set_width(lbl_text, 155);
+    lv_label_set_long_mode(lbl_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(lbl_text, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(lbl_text, label);
     lv_obj_set_style_text_font(lbl_text, ZOTTI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(lbl_text, ZOTTI_WHITE, 0);
-    lv_obj_align(lbl_text, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_obj_align(lbl_text, LV_ALIGN_BOTTOM_MID, 0, -8);
 
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
 }
@@ -128,7 +132,7 @@ void ui_menu_show(void)
     lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
     create_menu_btn(grid, LV_SYMBOL_CHARGE,     "Dashboard",    cb_dashboard);
-    create_menu_btn(grid, LV_SYMBOL_REFRESH,    "Scanner",      cb_scanner);
+    create_menu_btn(grid, LV_SYMBOL_GPS,        "Computador de Bordo", cb_bcu_trip);
     create_menu_btn(grid, LV_SYMBOL_SETTINGS,   "ECU",          cb_ecu);
     create_menu_btn(grid, LV_SYMBOL_LIST,       "CAN",          cb_can);
     create_menu_btn(grid, LV_SYMBOL_SAVE,       "Data Logger",  cb_datalogger);
