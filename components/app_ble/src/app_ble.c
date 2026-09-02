@@ -169,6 +169,8 @@ static int gattc_on_write_cccd(uint16_t conn_handle, const struct ble_gatt_error
     int which = (int)(uintptr_t)arg;
     if (error->status != 0) {
         ESP_LOGW(TAG, "falha ao ativar notificacao (which=%d): status=%d", which, error->status);
+    } else {
+        ESP_LOGI(TAG, "[GATTC] notificacao ativada (which=%d)", which);
     }
     gattc_cccd_step_done(conn_handle);
     return 0;
@@ -222,6 +224,13 @@ static int gattc_on_disc_all_chrs(uint16_t conn_handle, const struct ble_gatt_er
             if (which == GATTC_CHR_TELEMETRIA) s_telem_val_handle    = chr->val_handle;
             if (which == GATTC_CHR_UDS_REQ)    s_uds_req_val_handle  = chr->val_handle;
             if (which == GATTC_CHR_UDS_RESP)   s_uds_resp_val_handle = chr->val_handle;
+
+            static const char *k_which_name[] = {"Telemetria", "UDS Request", "UDS Response"};
+            ESP_LOGI(TAG, "[GATTC] characteristic %s encontrada (val_handle=%u)",
+                     k_which_name[which], chr->val_handle);
+        } else {
+            ESP_LOGW(TAG, "[GATTC] characteristic desconhecida no servico (handle=%u) — ignorada",
+                     chr->val_handle);
         }
         return 0;
     }
@@ -230,6 +239,8 @@ static int gattc_on_disc_all_chrs(uint16_t conn_handle, const struct ble_gatt_er
             ESP_LOGW(TAG, "nenhuma characteristic conhecida encontrada no servico da ECU");
             return 0;
         }
+        ESP_LOGI(TAG, "[GATTC] %d characteristic(s) conhecida(s) encontrada(s) — ativando notificacoes",
+                 s_chr_count);
         s_cccd_step = 0;
         gattc_next_cccd(conn_handle);
         return 0;
@@ -245,6 +256,8 @@ static int gattc_on_disc_svc(uint16_t conn_handle, const struct ble_gatt_error *
     if (error->status == 0 && service) {
         s_svc_start_handle = service->start_handle;
         s_svc_end_handle   = service->end_handle;
+        ESP_LOGI(TAG, "[GATTC] servico da ECU encontrado (handles %u..%u)",
+                 s_svc_start_handle, s_svc_end_handle);
         return 0;
     }
     if (error->status == BLE_HS_EDONE) {
@@ -388,6 +401,8 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
+            ESP_LOGI(TAG, "conectado (handle=%d) — iniciando descoberta do servico da ECU",
+                     (int)event->connect.conn_handle);
             set_status(APP_BLE_STATE_CONNECTED, "Conectado");
             s_conn_handle = event->connect.conn_handle;
             gattc_reset_state();
@@ -399,11 +414,13 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
                 ESP_LOGW(TAG, "disc_svc_by_uuid falhou: rc=%d", rc);
             }
         } else {
+            ESP_LOGW(TAG, "falha ao conectar: status=%d", event->connect.status);
             set_status(APP_BLE_STATE_ERROR, "Falha ao conectar");
         }
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG, "desconectado (motivo=%d)", event->disconnect.reason);
         set_status(APP_BLE_STATE_IDLE, "Desconectado");
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         gattc_reset_state();
