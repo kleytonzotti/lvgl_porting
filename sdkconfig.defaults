@@ -63,6 +63,37 @@ CONFIG_BT_NIMBLE_ENABLED=y
 # no monitor serial; WARNING deixa so erros/avisos.
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 
+# Incidente real em hardware (2026-09-01): conectar no periferico de debug
+# BLE (components/app_map_debug_ble/) com um celular (nRF Connect) travava
+# o sistema logo apos "conectado" — log mostrava "BLE_INIT: Malloc failed"
+# bem na hora do connect/disconnect. Causa: o padrao do ESP-IDF pra MTU
+# preferido do ATT e 256 bytes; nRF Connect pede MTU grande automaticamente
+# ao conectar, e o controlador BT tenta alocar buffers proporcionais a
+# isso — numa placa ja apertada de RAM interna (framebuffer RGB + pool
+# fixo de 64KB da LVGL, ver ui_screen_map.c), essa alocação falha. Nenhuma
+# funcionalidade deste projeto precisa de MTU grande: telemetria (18
+# bytes) e os PDUs de mapa (ate 18 bytes) cabem inteiros no MTU MINIMO do
+# BLE (23 — 20 bytes uteis), entao reduzir isso nao quebra nada documentado.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=23
+
+# Continuação do incidente acima — o MTU sozinho não foi suficiente (ainda
+# travava com "BLE_INIT: Malloc failed" ao trocar de tela ou mandar dados
+# pelo BLE de debug). Números reais coletados em campo (log [DIAG-BLE-MEM],
+# 2026-09-01): mesmo OCIOSA, a placa roda com uns 560 bytes livres de RAM
+# interna — framebuffer/bounce buffer do RGB + pool fixo da LVGL + tudo
+# mais já consomem quase tudo (ver ROADMAP.md). Reduzir o número máximo de
+# conexões simultâneas (o host NimBLE dimensiona 3 pools estáticos a partir
+# disso — ver ble_hs_conn.c/ble_gatts.c/ble_hs_hci_evt.c) e a profundidade
+# dos pools de buffer abaixo (não o tamanho de cada bloco) devolve ~9KB de
+# RAM sem tirar nenhuma funcionalidade usada: este projeto só tem 1 conexão
+# BLE por vez (um celular no debug, ou futuramente 1 ligação com a ECU
+# STM32 — nunca as duas juntas) e tráfego baixo (PDUs de até 18 bytes, um a
+# cada ~20ms).
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_WHITELIST_SIZE=1
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=8
+
 # Partição "factory" de 1MB (single-app padrão) ficou pequena depois dos
 # componentes novos (app_ecu/app_pedal_link/app_sim/app_dash_profile) —
 # binário passou de 1MB por ~4KB. "Large" usa 1500K, com folga (flash tem

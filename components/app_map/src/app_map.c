@@ -297,8 +297,84 @@ void app_map_set_debug_sniffer(app_map_pdu_cb_t cb, void *ctx)
     s_debug_sniffer_ctx = ctx;
 }
 
+// ─────────────────────────────────────────────────────
+// Transporte GATT real — ver comentario grande em app_map.h. Registrado
+// por app_ble.c depois de conectar+descobrir o servico da ECU; enquanto
+// isso nao acontecer (ou em qualquer build sem BLE, como o test_app),
+// ambos ficam NULL e as funcoes abaixo caem no fallback de sempre.
+// ─────────────────────────────────────────────────────
+static app_map_transport_write_t s_transport_write = NULL;
+static app_map_transport_wait_t  s_transport_wait   = NULL;
+
+void app_map_set_transport(app_map_transport_write_t write_fn, app_map_transport_wait_t wait_fn)
+{
+    s_transport_write = write_fn;
+    s_transport_wait  = wait_fn;
+}
+
+#define APP_MAP_UDS_TIMEOUT_MS 2000
+
+// Escreve um PDU, espera a resposta e decodifica — usado por praticamente
+// toda etapa das duas sequencias (escrita e leitura). 'out_raw'/'out_raw_len'
+// recebem a resposta crua (quem chama usa quando precisa de mais que so
+// positive/service_id/nrc, como o seed da resposta de seguranca ou o dado
+// de um TransferData de leitura).
+static esp_err_t uds_txn(const uint8_t *pdu, uint8_t len, app_map_response_t *out_rsp,
+                          uint8_t *out_raw, uint8_t *out_raw_len)
+{
+    esp_err_t err = s_transport_write(pdu, len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "falha ao escrever PDU (SID 0x%02X): %s", pdu[0], esp_err_to_name(err));
+        return err;
+    }
+
+    err = s_transport_wait(out_raw, out_raw_len, APP_MAP_UDS_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "sem resposta da ECU pro SID 0x%02X: %s", pdu[0], esp_err_to_name(err));
+        return err;
+    }
+
+    if (!app_map_parse_response(out_raw, *out_raw_len, out_rsp)) {
+        ESP_LOGE(TAG, "resposta malformada da ECU pro SID 0x%02X", pdu[0]);
+        return ESP_FAIL;
+    }
+    if (!out_rsp->positive) {
+        ESP_LOGE(TAG, "ECU recusou SID 0x%02X: NRC 0x%02X", out_rsp->service_id, out_rsp->nrc);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+typedef struct {
+    bool      failed;
+    esp_err_t err;
+} transfer_write_ctx_t;
+
+static void transfer_data_write_cb(void *ctx_v, const uint8_t *pdu, uint8_t len)
+{
+    transfer_write_ctx_t *ctx = (transfer_write_ctx_t *)ctx_v;
+    if (ctx->failed) return;   // um bloco ja falhou — nao adianta mandar os seguintes
+
+    app_map_response_t rsp;
+    uint8_t resp[APP_MAP_PDU_MAX_LEN];
+    uint8_t resp_len;
+    esp_err_t err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) {
+        ctx->failed = true;
+        ctx->err    = err;
+        return;
+    }
+    if (rsp.service_id != APP_MAP_SID_TRANSFER_DATA) {
+        ESP_LOGE(TAG, "resposta inesperada durante TransferData (SID 0x%02X)", rsp.service_id);
+        ctx->failed = true;
+        ctx->err    = ESP_FAIL;
+    }
+}
+
 esp_err_t app_map_send_to_ecu(const app_map_set_t *set, app_map_table_id_t table_id)
 {
+    if (!set) return ESP_ERR_INVALID_ARG;
+
     // DEBUG TEMPORARIO: com um sniffer registrado, monta e entrega a ele a
     // sequencia completa de PDUs que um GATT client de verdade mandaria —
     // nao muda o que a funcao retorna. O seed usado pra ilustrar o
@@ -326,21 +402,59 @@ esp_err_t app_map_send_to_ecu(const app_map_set_t *set, app_map_table_id_t table
         s_debug_sniffer(s_debug_sniffer_ctx, pdu, len);
     }
 
-    // Falta o GATT client de ESCRITA em app_ble.c — mesma pendencia do
-    // subscribe de telemetria do app_ecu (ROADMAP.md §4). Os PDUs ja podem
-    // ser montados e decodificados de verdade (funcoes acima, testadas em
-    // Unity); so falta o transporte real pra rodar a sequencia completa:
-    //   1. app_map_build_session_control(APP_MAP_SESSION_PROGRAMMING, ...)
-    //   2. app_map_build_security_seed_request(...) -> ler seed da resposta
-    //      -> app_map_build_security_send_key(seed, ...)
-    //   3. app_map_build_request_download(table_id, ...) -> ler
-    //      maxNumberOfBlockLength da resposta
-    //   4. app_map_build_transfer_data_pdus(..., max_block_len, ...) em loop
-    //   5. app_map_build_transfer_exit(...)
-    // Cada passo espera a resposta (app_map_parse_response) antes do
-    // proximo — se vier negativa, aborta e reporta o NRC.
-    ESP_LOGW(TAG, "Envio de mapa por BLE ainda nao implementado (falta GATT client de escrita)");
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!s_transport_write || !s_transport_wait) {
+        ESP_LOGW(TAG, "Envio de mapa por BLE ainda nao implementado (falta GATT client de escrita)");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    uint8_t pdu[APP_MAP_PDU_MAX_LEN];
+    uint8_t resp[APP_MAP_PDU_MAX_LEN];
+    uint8_t resp_len;
+    app_map_response_t rsp;
+    esp_err_t err;
+
+    // 1. Sessao de programacao
+    uint8_t len = app_map_build_session_control(APP_MAP_SESSION_PROGRAMMING, pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+
+    // 2. Seguranca: pede seed, calcula e manda a key
+    len = app_map_build_security_seed_request(pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+    if (resp_len < 4) {
+        ESP_LOGE(TAG, "resposta de seed curta demais (%u bytes)", resp_len);
+        return ESP_FAIL;
+    }
+    uint16_t seed = (uint16_t)resp[2] | ((uint16_t)resp[3] << 8);
+
+    len = app_map_build_security_send_key(seed, pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+
+    // 3. RequestDownload — a resposta traz quantos bytes de dado cabem por
+    // TransferData ([0x74][lengthFormatId][maxBlockLen]); 16 e o fallback
+    // se a ECU nao mandar esse campo.
+    len = app_map_build_request_download(table_id, pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+    uint8_t max_block_len = (resp_len >= 3) ? resp[2] : 16;
+    if (max_block_len == 0 || max_block_len > APP_MAP_PDU_MAX_LEN - 2) {
+        max_block_len = 16;
+    }
+
+    // 4. TransferData em loop
+    transfer_write_ctx_t tctx = {0};
+    app_map_build_transfer_data_pdus(set, table_id, max_block_len, transfer_data_write_cb, &tctx);
+    if (tctx.failed) return tctx.err;
+
+    // 5. RequestTransferExit — carrega o CRC do que mandamos
+    len = app_map_build_transfer_exit(set, table_id, pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+
+    ESP_LOGI(TAG, "Mapa (tabela %d) gravado na ECU com sucesso", (int)table_id);
+    return ESP_OK;
 }
 
 // ─────────────────────────────────────────────────────
@@ -418,22 +532,76 @@ void app_map_deserialize_table(const uint8_t *buf, app_map_table_id_t table_id, 
 
 esp_err_t app_map_read_from_ecu(app_map_table_id_t table_id, app_map_set_t *out)
 {
-    (void)table_id;
-    (void)out;
-    // Falta o GATT client em app_ble.c — mesma pendencia do
-    // app_map_send_to_ecu(). Os PDUs de leitura ja podem ser montados e
-    // decodificados de verdade (funcoes acima, testadas em Unity); so
-    // falta o transporte real pra rodar a sequencia:
-    //   1. app_map_build_request_upload(table_id, ...)
-    //   2. loop: app_map_build_transfer_data_request(bsc, ...) -> escreve
-    //      -> le a resposta (notify) -> app_map_parse_transfer_data_response(...)
-    //      -> acumula o dado num buffer de APP_MAP_SERIALIZED_LEN bytes
-    //   3. app_map_build_transfer_exit_read(...) -> le o CRC16 que a ECU
-    //      devolve, recalcula com app_map_crc16() sobre o buffer
-    //      reassemblado e SO aceita se bater
-    //   4. app_map_deserialize_table(buf, table_id, out)
-    // Enquanto isso nao existir, o chamador deve tratar o retorno
-    // ESP_ERR_NOT_SUPPORTED honestamente — nunca assumir 'out' valido.
-    ESP_LOGW(TAG, "Leitura de mapa por BLE ainda nao implementada (falta GATT client)");
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!out) return ESP_ERR_INVALID_ARG;
+
+    if (!s_transport_write || !s_transport_wait) {
+        ESP_LOGW(TAG, "Leitura de mapa por BLE ainda nao implementada (falta GATT client)");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    uint8_t pdu[APP_MAP_PDU_MAX_LEN];
+    uint8_t resp[APP_MAP_PDU_MAX_LEN];
+    uint8_t resp_len;
+    app_map_response_t rsp;
+    esp_err_t err;
+
+    // 1. RequestUpload — deliberadamente sem sessao de programacao/security
+    // (ver comentario grande em app_map.h): ler e mais leve que escrever.
+    uint8_t len = app_map_build_request_upload(table_id, pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+
+    // 2. TransferData em loop ate reassemblar a tabela inteira — aqui quem
+    // carrega o dado e a RESPOSTA, nao o pedido (diferenca chave do
+    // upload em relacao ao download, ver app_map.h).
+    uint8_t buf[APP_MAP_SERIALIZED_LEN];
+    size_t  off = 0;
+    uint8_t bsc = 0x01;
+    while (off < APP_MAP_SERIALIZED_LEN) {
+        len = app_map_build_transfer_data_request(bsc, pdu);
+        err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+        if (err != ESP_OK) return err;
+
+        uint8_t recv_bsc;
+        const uint8_t *data;
+        uint8_t data_len;
+        if (!app_map_parse_transfer_data_response(resp, resp_len, &recv_bsc, &data, &data_len)) {
+            ESP_LOGE(TAG, "TransferData de leitura malformado");
+            return ESP_FAIL;
+        }
+        if (recv_bsc != bsc) {
+            ESP_LOGE(TAG, "blockSequenceCounter fora de ordem na leitura (esperado %u, recebido %u)",
+                     bsc, recv_bsc);
+            return ESP_FAIL;
+        }
+
+        size_t remaining = APP_MAP_SERIALIZED_LEN - off;
+        size_t copy_len  = data_len < remaining ? data_len : remaining;
+        memcpy(&buf[off], data, copy_len);
+        off += copy_len;
+        bsc++;   // uint8_t: da a volta sozinho, igual ao padrao real
+    }
+
+    // 3. RequestTransferExit — o CRC vem na RESPOSTA da ECU (nao no
+    // pedido, diferente do fechamento de escrita); so aceita a leitura se
+    // bater com o que reassemblamos, senao descarta (nunca assume o cache
+    // local como se fosse atual — ver app_map.h).
+    len = app_map_build_transfer_exit_read(pdu);
+    err = uds_txn(pdu, len, &rsp, resp, &resp_len);
+    if (err != ESP_OK) return err;
+    if (resp_len < 3) {
+        ESP_LOGE(TAG, "resposta de fechamento de leitura sem CRC");
+        return ESP_FAIL;
+    }
+    uint16_t ecu_crc   = (uint16_t)resp[1] | ((uint16_t)resp[2] << 8);
+    uint16_t local_crc = app_map_crc16(buf, APP_MAP_SERIALIZED_LEN);
+    if (ecu_crc != local_crc) {
+        ESP_LOGE(TAG, "CRC nao bate na leitura (ECU=0x%04X, calculado=0x%04X) — descartando",
+                 ecu_crc, local_crc);
+        return ESP_FAIL;
+    }
+
+    app_map_deserialize_table(buf, table_id, out);
+    ESP_LOGI(TAG, "Mapa (tabela %d) lido da ECU com sucesso", (int)table_id);
+    return ESP_OK;
 }

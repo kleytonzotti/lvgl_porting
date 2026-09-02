@@ -183,6 +183,25 @@ typedef enum {
 #define APP_MAP_ADDR_IGNICAO  0x0001
 #define APP_MAP_ADDR_SONDA    0x0002
 
+// UUIDs do serviço BLE da ECU — mesmos documentados em
+// STM32_ECU_SIMULADOR_BLE.md §4, fonte única compartilhada por
+// components/app_map_debug_ble (servidor de debug) e components/app_ble
+// (GATT client de verdade), pra nunca divergir entre os dois. Bytes em
+// ordem "de fio" (little-endian/invertida em relação à string humana do
+// UUID) — o jeito que BLE_UUID128_INIT() espera.
+#define APP_MAP_BLE_SVC_UUID128 \
+    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f, \
+    0x5d, 0x4a, 0x00, 0xec, 0x00, 0x10, 0x2b, 0x7a
+#define APP_MAP_BLE_CHR_TELEMETRIA_UUID128 \
+    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f, \
+    0x5d, 0x4a, 0x00, 0xec, 0x01, 0x10, 0x2b, 0x7a
+#define APP_MAP_BLE_CHR_UDS_REQ_UUID128 \
+    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f, \
+    0x5d, 0x4a, 0x00, 0xec, 0x02, 0x10, 0x2b, 0x7a
+#define APP_MAP_BLE_CHR_UDS_RESP_UUID128 \
+    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f, \
+    0x5d, 0x4a, 0x00, 0xec, 0x03, 0x10, 0x2b, 0x7a
+
 // Tamanho do buffer serializado (eixos + a matriz de celulas de UMA
 // tabela) que viaja fatiado dentro dos TransferData.
 #define APP_MAP_SERIALIZED_LEN \
@@ -251,12 +270,34 @@ typedef struct {
 } app_map_response_t;
 bool app_map_parse_response(const uint8_t *pdu, uint8_t len, app_map_response_t *out);
 
-// Roda a sequência completa (de verdade, pelo ar) pra gravar uma tabela na
+// Transporte GATT real (ver components/app_ble) — mesmo padrão do debug
+// sniffer acima: quem registrar aqui é chamado por app_map_send_to_ecu()/
+// app_map_read_from_ecu() pra escrever cada PDU e esperar a resposta da
+// ECU. app_map.c não depende de BLE/NimBLE — só desses dois ponteiros de
+// função; é assim que o GATT client (app_ble.c) fica num componente
+// separado sem criar dependência circular entre os dois.
+//
+// write_fn: escreve 'pdu' (len bytes) na characteristic "UDS Request" da
+// ECU conectada agora. Deve retornar rápido (não espera resposta) —
+// ESP_ERR_INVALID_STATE se não houver ECU conectada/pronta.
+//
+// wait_fn: bloqueia (até timeout_ms) esperando o PRÓXIMO notify recebido
+// na characteristic "UDS Response", copiando pra 'out' (out_len
+// preenchido com o tamanho real). ESP_ERR_TIMEOUT se nada chegar a tempo.
+// Se nada registrar (app_ble.c só faz isso depois de conectar+descobrir o
+// serviço da ECU), ambas ficam NULL e as funções abaixo se comportam como
+// antes (ESP_ERR_NOT_SUPPORTED).
+typedef esp_err_t (*app_map_transport_write_t)(const uint8_t *pdu, uint8_t len);
+typedef esp_err_t (*app_map_transport_wait_t)(uint8_t *out, uint8_t *out_len, uint32_t timeout_ms);
+void app_map_set_transport(app_map_transport_write_t write_fn, app_map_transport_wait_t wait_fn);
+
+// Roda a sequência completa (de verdade, pelo ar, quando o transporte
+// acima estiver registrado e a ECU conectada) pra gravar uma tabela na
 // ECU: sessão de programação -> segurança -> RequestDownload ->
 // TransferData (loop) -> RequestTransferExit, interpretando cada resposta
-// antes de seguir pra próxima etapa. Hoje sempre retorna
-// ESP_ERR_NOT_SUPPORTED — falta o GATT client de escrita em app_ble.c,
-// mesma pendência do subscribe de telemetria do app_ecu (ROADMAP.md §4).
+// antes de seguir pra próxima etapa (aborta no primeiro NRC negativo ou
+// timeout). Sem transporte registrado ou sem ECU conectada, retorna
+// ESP_ERR_NOT_SUPPORTED / ESP_ERR_INVALID_STATE — nunca assume sucesso.
 esp_err_t app_map_send_to_ecu(const app_map_set_t *set, app_map_table_id_t table_id);
 
 // DEBUG TEMPORÁRIO (removível, ver components/app_map_debug_ble/) — se
@@ -326,12 +367,12 @@ uint8_t app_map_build_transfer_exit_read(uint8_t *out);
 // os eixos, compartilhados); não mexe nas outras duas tabelas de 'out'.
 void app_map_deserialize_table(const uint8_t *buf, app_map_table_id_t table_id, app_map_set_t *out);
 
-// Lê (de verdade, pelo ar) uma tabela da ECU pra 'out'. Hoje sempre
-// retorna ESP_ERR_NOT_SUPPORTED — mesma pendência do GATT client que
-// app_map_send_to_ecu(); os PDUs já podem ser montados/decodificados de
-// verdade (funções acima, testadas em Unity). Se e somente se retornar
-// ESP_OK, 'out' foi preenchido com dado confirmado por CRC — o chamador
-// NUNCA deve tratar 'out' como válido quando o retorno não é ESP_OK.
+// Lê (de verdade, pelo ar, quando o transporte acima estiver registrado e
+// a ECU conectada) uma tabela da ECU pra 'out'. Sem transporte/ECU,
+// retorna ESP_ERR_NOT_SUPPORTED / ESP_ERR_INVALID_STATE. Se e somente se
+// retornar ESP_OK, 'out' foi preenchido com dado confirmado por CRC — o
+// chamador NUNCA deve tratar 'out' como válido quando o retorno não é
+// ESP_OK.
 esp_err_t app_map_read_from_ecu(app_map_table_id_t table_id, app_map_set_t *out);
 
 #ifdef __cplusplus

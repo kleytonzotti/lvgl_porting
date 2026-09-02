@@ -438,7 +438,7 @@ static void build_map_tab(lv_obj_t *parent, app_map_table_id_t tid)
     // (ex.: delta bruto 10 vira "+1.00" pra ms/graus mas "+0.10" pra lambda)
     // — evita precisar de um array de textos por tabela.
     static const int16_t deltas[4] = {-10, -1, 1, 10};
-    int32_t btn_x[4] = {5, 130, 250, 380};// TODO: ajustar em hardcode
+    int32_t btn_x[4] = {5, 130, 255, 380};// TODO: ajustar em hardcode
     for (int i = 0; i < 4; i++) {
         s_step_ctx[tid][i].tid   = tid;
         s_step_ctx[tid][i].delta = deltas[i];

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "host/ble_hs.h"
@@ -20,22 +21,34 @@ static const char *TAG = "APP_MAP_DBG_BLE";
 // e o nome pra filtrar no nRF Connect.
 #define DEBUG_DEVICE_NAME "ZOTTI-ECU"
 
-// UUIDs identicos aos documentados em STM32_ECU_SIMULADOR_BLE.md. Os bytes
-// aqui sao little-endian (ordem "de fio"), por isso parecem invertidos em
-// relacao a string 7a2b1000-ec00-4a5d-9f6b-1234567890ab (servico) /
-// 7a2b1002-...-...-...-...ab (characteristic "UDS Request").
-static const ble_uuid128_t s_svc_uuid = BLE_UUID128_INIT(
-    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f,
-    0x5d, 0x4a, 0x00, 0xec, 0x00, 0x10, 0x2b, 0x7a);
+// UUIDs identicos aos documentados em STM32_ECU_SIMULADOR_BLE.md — definidos
+// uma unica vez em app_map.h (compartilhados com o GATT client de verdade
+// em components/app_ble) pra nunca divergir entre servidor de debug e
+// cliente real.
+static const ble_uuid128_t s_svc_uuid = BLE_UUID128_INIT(APP_MAP_BLE_SVC_UUID128);
 
-static const ble_uuid128_t s_chr_uds_req_uuid = BLE_UUID128_INIT(
-    0xab, 0x90, 0x78, 0x56, 0x34, 0x12, 0x6b, 0x9f,
-    0x5d, 0x4a, 0x00, 0xec, 0x02, 0x10, 0x2b, 0x7a);
+static const ble_uuid128_t s_chr_uds_req_uuid = BLE_UUID128_INIT(APP_MAP_BLE_CHR_UDS_REQ_UUID128);
 
 static uint16_t s_chr_val_handle;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
 static int debug_gap_event(struct ble_gap_event *event, void *arg);
+
+// Incidente real (2026-09-01): conectar com nRF Connect travava logo apos
+// "conectado" com "BLE_INIT: Malloc failed" no log — causa era o MTU
+// preferido do ATT (256, padrao de fabrica do ESP-IDF) forcando uma
+// alocacao de buffer grande demais pra RAM interna livre desta placa (ver
+// sdkconfig.defaults). Corrigido reduzindo o MTU preferido pra 23 (o
+// minimo do BLE — sobra de sobra pros PDUs daqui, que tem no maximo 18
+// bytes). Este log fica pra confirmar headroom se algo parecido
+// acontecer de novo.
+static void log_heap_diag(const char *when)
+{
+    ESP_LOGI(TAG, "[DIAG-BLE-MEM] %s: heap interno livre=%u bytes (maior bloco=%u)",
+             when,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
 
 // Characteristic e so NOTIFY (sem READ/WRITE) — este callback nunca
 // deveria ser chamado de verdade, so existe porque o struct exige um
@@ -73,6 +86,19 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
 static void sniffer_notify_cb(void *ctx, const uint8_t *pdu, uint8_t len)
 {
     (void)ctx;
+
+    // Verificacao sem depender do nRF Connect/BLE funcionar: o mesmo PDU
+    // que seria notificado tambem sai em hexadecimal no log serial, sempre
+    // (mesmo sem ninguem conectado). Primeiro byte = SID UDS (0x10 sessao,
+    // 0x27 seguranca, 0x34 RequestDownload, 0x36 TransferData, 0x37
+    // RequestTransferExit — ver app_map.h).
+    char hex[3 * APP_MAP_PDU_MAX_LEN + 1];
+    int pos = 0;
+    for (uint8_t i = 0; i < len && pos < (int)sizeof(hex) - 3; i++) {
+        pos += snprintf(&hex[pos], sizeof(hex) - pos, "%02X ", pdu[i]);
+    }
+    ESP_LOGI(TAG, "[DEBUG-BLE] PDU (len=%u): %s", len, hex);
+
     if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) return;
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(pdu, len);
@@ -124,6 +150,7 @@ static int debug_gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "[DEBUG-BLE] conectado (handle=%d)", (int)s_conn_handle);
+            log_heap_diag("apos conectar");
         } else {
             ESP_LOGW(TAG, "[DEBUG-BLE] falha ao conectar (status=%d)", event->connect.status);
             restart_advertising();
@@ -133,6 +160,7 @@ static int debug_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "[DEBUG-BLE] desconectado (motivo=%d)", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        log_heap_diag("apos desconectar");
         restart_advertising();
         return 0;
 
